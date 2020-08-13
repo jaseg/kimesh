@@ -2,6 +2,7 @@ import wx
 import mesh_plugin_dialog
 import pcbnew
 from collections import defaultdict
+import pyclipper
 
 # Implementing MainDialog
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
@@ -13,6 +14,10 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.m_removeButton.Bind(wx.EVT_BUTTON, self.tearup_mesh)
         self.m_generateButton.Bind(wx.EVT_BUTTON, self.generate_mesh)
         self.m_net_prefix.Bind(wx.EVT_TEXT, self.update_net_label)
+        self.m_traceSpin.Bind(wx.EVT_SPIN_UP, lambda evt: self.spin(self.m_traceInput, 1.0))
+        self.m_traceSpin.Bind(wx.EVT_SPIN_DOWN, lambda evt: self.spin(self.m_traceInput, -1.0))
+        self.m_spaceSpin.Bind(wx.EVT_SPIN_UP, lambda evt: self.spin(self.m_spaceInput, 1.0))
+        self.m_spaceSpin.Bind(wx.EVT_SPIN_DOWN, lambda evt: self.spin(self.m_spaceInput, -1.0))
 
         self.tearup_confirm_dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
 
@@ -20,6 +25,14 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.update_net_label(None)
 
         self.SetMinSize(self.GetSize())
+
+    def spin(self, le_input, delta):
+        try:
+            current = float(le_input.Value)
+            current += delta
+            le_input.Value = '{:.03f}'.format(current)
+        except ValueError:
+            pass
 
     def get_matching_nets(self):
         prefix = self.m_net_prefix.Value
@@ -72,22 +85,37 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 return wx.MessageDialog(self, "Error: More than two connection pads found for net {}.".format(net)).ShowModal()
 
         eco1_id = self.board.GetLayerID('Eco1.User')
-        mesh_zones = {}
+        mesh_zones = []
         for drawing in self.board.GetDrawings():
             if drawing.GetLayer() == eco1_id:
-                mesh_zones[drawing] = []
+                mesh_zones.append(drawing)
 
-        if len(mesh_zones) == 0:
+        if not mesh_zones:
                 return wx.MessageDialog(self, "Error: Could not find any mesh zones on the Eco1.User layer.").ShowModal()
 
         for zone in mesh_zones:
+            anchors = []
             for module in self.board.GetModules():
                 for foo in module.GraphicalItems():
                     if not isinstance(foo, pcbnew.TEXTE_MODULE):
                         continue
 
-                    if foo.GetText() == "
-        # find mesh area on eco1, check connection pads are within target area
+                    if foo.GetText() == "mesh_anchor":
+                        anchors.append(module)
+                        break
+
+            if not anchors:
+                return wx.MessageDialog(self, "Error: No anchor found for mesh zone centered on {:.3f}, {:.3f} mm".format(
+                    zone.GetCenter().x / pcbnew.IU_PER_MM, zone.GetCenter().y / pcbnew.IU_PER_MM
+                            )).ShowModal()
+            if len(anchors) > 1:
+                return wx.MessageDialog(self, "Error: Currently, only a single anchor is supported.").ShowModal()
+
+            self.generate_mesh(zone, anchors)
+
+    def generate_mesh(self, zone, anchors):
+        anchor, = anchors
+
 
     def update_net_label(self, evt):
         self.m_netLabel.SetLabel('{} matching nets'.format(len(self.get_matching_nets())))
