@@ -1,8 +1,12 @@
-import wx
-import mesh_plugin_dialog
-import pcbnew
 from collections import defaultdict
-import pyclipper
+
+import wx
+
+import pcbnew
+
+import shapely
+
+from . import mesh_plugin_dialog
 
 # Implementing MainDialog
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
