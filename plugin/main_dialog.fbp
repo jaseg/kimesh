@@ -45,7 +45,7 @@
             <property name="minimum_size"></property>
             <property name="name">MainDialog</property>
             <property name="pos"></property>
-            <property name="size">588,356</property>
+            <property name="size">751,480</property>
             <property name="style">wxCLOSE_BOX|wxDEFAULT_DIALOG_STYLE|wxMINIMIZE_BOX|wxRESIZE_BORDER|wxSTAY_ON_TOP</property>
             <property name="subclass">; ; forward_declare</property>
             <property name="title">Security Mesh Generator Plugin</property>
