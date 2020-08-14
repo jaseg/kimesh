@@ -185,7 +185,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         zone_outline, *_rest = zone_outlines
         
         width_per_trace = settings.trace_width + settings.space_width
-        grid_cell_width = width_per_trace * settings.num_traces
+        grid_cell_width = width_per_trace * settings.num_traces * 2
 
         zone_outline_rotated = affinity.rotate(zone_outline, -settings.mesh_angle, origin=zone_outline.centroid)
         bbox = zone_outline_rotated.bounds
@@ -254,13 +254,21 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         def iter_neighbors(x, y):
             if x > 0:
-                yield x-1, y
+                yield x-1, y, 0b0100
             if x < grid_cols:
-                yield x+1, y
+                yield x+1, y, 0b0001
             if y > 0:
-                yield x, y-1
+                yield x, y-1, 0b1000
             if y < grid_rows:
-                yield x, y+1
+                yield x, y+1, 0b0010
+
+        def reciprocal(mask):
+            return {
+                    0b0001: 0b0100,
+                    0b0010: 0b1000,
+                    0b0100: 0b0001,
+                    0b1000: 0b0010
+                    }[mask]
 
         def random_iter(it):
             l = list(it)
@@ -274,18 +282,24 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             
             x, y = exit_cell[1]
             visited = 0
+            key = 0
             stack = []
-            while not_visited:
-                for n_x, n_y in random_iter(iter_neighbors(x, y)):
+            while not_visited or stack:
+                for n_x, n_y, mask in random_iter(iter_neighbors(x, y)):
                     if (n_x, n_y) in not_visited:
-                        dbg.add(grid[n_y][n_x], color=virihex(visited, max=num_to_visit))
-                        stack.append((x, y))
+                        dbg.add(grid[n_y][n_x], color=virihex(visited, max=num_to_visit), opacity=0.2)
+                        key |= mask
+                        stack.append((x, y, key))
                         not_visited.remove((n_x, n_y))
                         visited += 1
-                        x, y = n_x, n_y
+                        x, y, key = n_x, n_y, reciprocal(mask)
                         break
                 else:
-                    *stack, (x, y) = stack
+                    for segment in Pattern.render(key, settings.num_traces):
+                        segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
+                        segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
+                        dbg.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ff000080')
+                    *stack, (x, y, key) = stack
 
             for foo in anchor_outlines:
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
@@ -301,6 +315,72 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
     def quit(self, evt):
         self.Destroy()
+
+
+class Pattern:
+    @staticmethod
+    def render(key, n):
+        yield from Pattern.LUT[key](n)
+    
+    def draw_I(n):
+        for i in range(2*n):
+            sp = (i+0.5) * (1/(2*n))
+            yield geometry.LineString([(sp, 0), (sp, 1)])
+
+    def draw_U(n):
+        for i in range(n):
+            sp = (i+0.5) * (1/(2*n))
+            yield geometry.LineString([(sp, 0), (sp, 1-sp), (1-sp, 1-sp), (1-sp, 0)])
+
+    def draw_L(n):
+        for i in range(2*n):
+            sp = (i+0.5) * (1/(2*n))
+            yield geometry.LineString([(sp, 0), (sp, 1-sp), (1, 1-sp)])
+    
+    def draw_T(n):
+        for i in range(n):
+            sp = (i+0.5) * (1/(2*n))
+            yield geometry.LineString([(0, sp), (1, sp)])
+            yield geometry.LineString([(0, 1-sp), (sp, 1-sp), (sp, 1)])
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp), (1, 1-sp)])
+
+    def draw_X(n):
+        for i in range(n):
+            sp = (i+0.5) * (1/(2*n))
+            yield geometry.LineString([(0, sp), (sp, sp), (sp, 0)])
+            yield geometry.LineString([(1-sp, 0), (1-sp, sp), (1, sp)])
+            yield geometry.LineString([(0, 1-sp), (sp, 1-sp), (sp, 1)])
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp), (1, 1-sp)])
+
+    def rotate(pattern, deg):
+        def wrapper(n):
+            for segment in pattern(n):
+                yield affinity.rotate(segment, deg, origin=(0.5, 0.5))
+        return wrapper
+
+    def raise_error(n):
+        return []
+        raise ValueError('Tried to render invalid cell. This is a bug.')
+
+    LUT = {
+            0b0000: raise_error,
+            0b0001: rotate(draw_U, 90),
+            0b0010: rotate(draw_U, 180),
+            0b0011: rotate(draw_L, 90),
+            0b0100: rotate(draw_U, -90),
+            0b0101: rotate(draw_I, -90),
+            0b0110: rotate(draw_L, 180),
+            0b0111: draw_T,
+            0b1000: draw_U,
+            0b1001: draw_L,
+            0b1010: draw_I,
+            0b1011: rotate(draw_T, -90),
+            0b1100: rotate(draw_L, -90),
+            0b1101: rotate(draw_T, 180),
+            0b1110: rotate(draw_T, 90),
+            0b1111: draw_X
+    }
+
 
 def virihex(val, max=1.0, alpha=1.0):
     r, g, b, _a = matplotlib.cm.viridis(val/max)
@@ -319,21 +399,30 @@ class DebugOutputWrapper:
         self.f = f
         self.objs = []
 
-    def add(self, obj, color=None, stroke_width=0, stroke_color=None):
-        self.objs.append((obj, (color, stroke_color, stroke_width)))
+    def add(self, obj, color=None, stroke_width=0, stroke_color=None, opacity=1.0):
+        self.objs.append((obj, (color, stroke_color, stroke_width, opacity)))
 
-    def gen_svg(self, obj, fill_color=None, stroke_color=None, stroke_width=None):
+    def gen_svg(self, obj, fill_color=None, stroke_color=None, stroke_width=None, opacity=1.0):
         fill_color = fill_color or '#ff0000aa'
         stroke_color = stroke_color or '#000000ff'
         stroke_width = 0 if stroke_width is None else stroke_width
 
-        exterior_coords = [ ["{},{}".format(*c) for c in obj.exterior.coords] ]
-        interior_coords = [ ["{},{}".format(*c) for c in interior.coords] for interior in obj.interiors ]
-        path = " ".join([
-            "M {0} L {1} z".format(coords[0], " L ".join(coords[1:]))
-            for coords in exterior_coords + interior_coords])
-        return (f'<path fill-rule="evenodd" fill="{fill_color}" stroke="{stroke_color}" '
-                f'stroke-width="{stroke_width}" opacity="0.6" d="{path}" />')
+        if isinstance(obj, polygon.Polygon):
+            exterior_coords = [ ["{},{}".format(*c) for c in obj.exterior.coords] ]
+            interior_coords = [ ["{},{}".format(*c) for c in interior.coords] for interior in obj.interiors ]
+            all_coords = exterior_coords + interior_coords
+            path = " ".join([
+                "M {0} L {1} z".format(coords[0], " L ".join(coords[1:]))
+                for coords in all_coords])
+        elif isinstance(obj, geometry.LineString):
+            all_coords = [ ["{},{}".format(*c) for c in obj.coords] ]
+            path = " ".join([
+                "M {0} L {1}".format(coords[0], " L ".join(coords[1:]))
+                for coords in all_coords])
+        else:
+            raise ValueError(f'Unhandled shapely object type {type(obj)}')
+        return (f'<path fill-rule="evenodd" fill="{fill_color}" opacity="{opacity}" stroke="{stroke_color}" '
+                f'stroke-width="{stroke_width}" d="{path}" />')
     
     def save(self, margin:'unit'=5, scale:'px/unit'=10):
         #specify margin in coordinate units
