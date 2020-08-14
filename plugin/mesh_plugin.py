@@ -15,7 +15,7 @@ def check_requirements(*packages):
             missing.append(pkg)
 
     if missing:
-        wx.MessageDialog(None, "Error: Missing python dependencies:\n\n{}.".format('\n'.join(missing)),
+        wx.MessageDialog(None, "Error: Missing python dependencies:\n\n{}".format('\n'.join(missing)),
                 "Missing Dependencies").ShowModal()
         return False
 
@@ -31,7 +31,7 @@ class MeshPlugin(pcbnew.ActionPlugin):
         self.show_toolbar_button = True
 
     def Run(self):
-        if not check_requirements('pyclipper'):
+        if not check_requirements('shapely'):
             return
 
         from .mesh_dialog import show_dialog

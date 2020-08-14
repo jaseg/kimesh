@@ -1,14 +1,32 @@
 from collections import defaultdict
+from dataclasses import dataclass
 
 import wx
 
 import pcbnew
 
 import shapely
+from shapely.geometry import polygon
+from shapely import affinity
 
 from . import mesh_plugin_dialog
 
-# Implementing MainDialog
+class GeneratorError(ValueError):
+    pass
+
+class AbortError(SystemError):
+    pass
+
+@dataclass
+class GeneratorSettings:
+    mesh_angle:  float = 0.0   # deg
+    trace_width: float = 0.127 # mm
+    space_width: float = 0.127 # mm
+    anchor_exit: float = 0.0   # deg
+    num_traces:  int   = 2
+    offset_x:    float = 0.0   # mm
+    offset_y:    float = 0.0   # mm
+
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def __init__(self, board):
         mesh_plugin_dialog.MainDialog.__init__(self, None)
@@ -18,10 +36,6 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.m_removeButton.Bind(wx.EVT_BUTTON, self.tearup_mesh)
         self.m_generateButton.Bind(wx.EVT_BUTTON, self.generate_mesh)
         self.m_net_prefix.Bind(wx.EVT_TEXT, self.update_net_label)
-        self.m_traceSpin.Bind(wx.EVT_SPIN_UP, lambda evt: self.spin(self.m_traceInput, 1.0))
-        self.m_traceSpin.Bind(wx.EVT_SPIN_DOWN, lambda evt: self.spin(self.m_traceInput, -1.0))
-        self.m_spaceSpin.Bind(wx.EVT_SPIN_UP, lambda evt: self.spin(self.m_spaceInput, 1.0))
-        self.m_spaceSpin.Bind(wx.EVT_SPIN_DOWN, lambda evt: self.spin(self.m_spaceInput, -1.0))
 
         self.tearup_confirm_dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
 
@@ -29,14 +43,6 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.update_net_label(None)
 
         self.SetMinSize(self.GetSize())
-
-    def spin(self, le_input, delta):
-        try:
-            current = float(le_input.Value)
-            current += delta
-            le_input.Value = '{:.03f}'.format(current)
-        except ValueError:
-            pass
 
     def get_matching_nets(self):
         prefix = self.m_net_prefix.Value
@@ -59,16 +65,31 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.tearup_confirm_dialog.SetYesNoLabels("Tear up {} nets".format(len(matching)), "Close")
 
         if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
-            for track in self.board.GetTracks():
-                if not (track.GetStatus() & pcbnew.TRACK_AR):
-                    continue
+            self.tearup_mesh()
 
-                if not track.GetNet().GetNetname() in matching:
-                    continue
+    def tearup_mesh(self):
+        for track in self.board.GetTracks():
+            if not (track.GetStatus() & pcbnew.TRACK_AR):
+                continue
 
-                board.Remove(track)
+            if not track.GetNet().GetNetname() in matching:
+                continue
+
+            board.Remove(track)
 
     def generate_mesh(self, evt):
+        try:
+            settings = GeneratorSettings(
+                mesh_angle  = float(self.m_angleSpin.Value),
+                trace_width = float(self.m_traceSpin.Value),
+                space_width = float(self.m_spaceSpin.Value),
+                anchor_exit = float(self.m_exitSpin.Value),
+                num_traces  = int(self.m_traceCountSpin.Value),
+                offset_x    = float(self.m_offsetXSpin.Value),
+                offset_y    = float(self.m_offsetYSpin.Value))
+        except ValueError as e:
+            return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
+
         nets = self.get_matching_nets()
 
         pads = defaultdict(lambda: [])
@@ -115,11 +136,90 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             if len(anchors) > 1:
                 return wx.MessageDialog(self, "Error: Currently, only a single anchor is supported.").ShowModal()
 
-            self.generate_mesh(zone, anchors)
+            try:
+                def warn(msg):
+                    dialog = wx.MessageDialog(self, msg + '\n\nDo you want to abort mesh generation?',
+                            "Mesh Generation Warning").ShowModal()
+                    dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
+                    dialog.SetYesNoLabels("Abort", "Ignore and continue")
 
-    def generate_mesh(self, zone, anchors):
+                    if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
+                        raise AbortError()
+
+                self.generate_mesh_backend(zone, anchors, warn=warn)
+
+            except GeneratorError as e:
+                return wx.MessageDialog(self, str(e), "Mesh Generation Error").ShowModal()
+            except AbortError:
+                pass
+
+    def poly_set_to_shapely(self, poly_set):
+        for i in range(poly_set.OutlineCount()):
+            outline = poly_set.Outline(i)
+
+            outline_points = []
+            for j in range(outline.PointCount()):
+                point = outline.CPoint(j)
+                outline_points.append((pcbnew.ToMM(point.x), pcbnew.ToMM(point.y)))
+            yield polygon.LinearRing(outline_points)
+
+    def generate_mesh_backend(self, zone, anchors, warn=lambda s: None, settings=GeneratorSettings()):
         anchor, = anchors
 
+        anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingPoly()))
+        if len(anchor_outlines) == 0:
+            raise GeneratorError('Could not find any outlines for anchor {}'.format(anchor.GetReference()))
+        if len(anchor_outlines) > 1:
+            warn('Anchor {} has multiple outlines. Using first outline for trace start.')
+
+        zone_outlines = list(self.poly_set_to_shapely(zone.GetPolyShape()))
+        if len(zone_outlines) == 0:
+            raise GeneratorError('Could not find any outlines for mesh zone.')
+        if len(zone_outlines) > 1:
+            raise GeneratorError('Mesh zone has too many outlines (has {}, should have one).'.format(len(zone_outlines)))
+        zone_outline, *_rest = zone_outlines
+        
+        mesh_origin = zone_outline.centroid
+        width_per_trace = settings.trace_width + settings.space_width
+        grid_cell_width = width_per_trace * settings.num_traces
+
+        zone_outline_rotated = affinity.rotate(zone_outline, -settings.mesh_angle, origin=mesh_origin)
+        bbox = zone_outline_rotated.bounds
+
+        grid_origin = (bbox[0] + settings.offset_x - grid_cell_width, bbox[1] + settings.offset_y - grid_cell_width)
+        grid_rows = int((bbox[3] - grid_origin[1]) / grid_cell_width + 2)
+        grid_cols = int((bbox[2] - grid_origin[0]) / grid_cell_width + 2)
+        print(f'generating grid of size {grid_rows} * {grid_cols}')
+
+        grid = []
+        for y in range(grid_rows):
+            row = []
+            for x in range(grid_cols):
+                cell = polygon.LinearRing([(0, 0), (0, 1), (1, 1), (1, 0)])
+                cell = affinity.scale(cell, grid_cell_width, grid_cell_width, origin=(0, 0))
+                cell = affinity.translate(cell, mesh_origin.x + x*grid_cell_width, mesh_origin.y + y*grid_cell_width)
+                cell = affinity.rotate(cell, settings.mesh_angle, origin=mesh_origin)
+                row.append(cell)
+            grid.append(row)
+            break
+
+        for row in grid:
+            for cell in row:
+                poly = pcbnew.DRAWSEGMENT()
+                poly.SetLayer(self.board.GetLayerID('Eco2.User'))
+                poly.SetShape(pcbnew.S_POLYGON)
+                poly.SetWidth(0)
+                self.board.Add(poly)
+                s = poly.GetPolyShape()
+                s.NewOutline()
+                for x, y in zip(*cell.xy):
+                    s.Append(pcbnew.FromMM(x), pcbnew.FromMM(y))
+                    print('OUTLINE POINT', x, y)
+            break
+
+        pcbnew.Refresh()
+        #self.tearup_mesh()
+        # TODO generate
 
     def update_net_label(self, evt):
         self.m_netLabel.SetLabel('{} matching nets'.format(len(self.get_matching_nets())))
