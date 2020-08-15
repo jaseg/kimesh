@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from contextlib import contextmanager
 import textwrap
 import random
+import math
+from itertools import count, islice
 
 import wx
 
@@ -13,6 +15,7 @@ import shapely
 from shapely import geometry
 from shapely.geometry import polygon
 from shapely import affinity
+import shapely.ops
 
 from . import mesh_plugin_dialog
 
@@ -24,13 +27,17 @@ class AbortError(SystemError):
 
 @dataclass
 class GeneratorSettings:
-    mesh_angle:  float = 0.0   # deg
-    trace_width: float = 0.127 # mm
-    space_width: float = 0.127 # mm
-    anchor_exit: float = 0.0   # deg
-    num_traces:  int   = 2
-    offset_x:    float = 0.0   # mm
-    offset_y:    float = 0.0   # mm
+    mesh_angle:     float = 0.0   # deg
+    trace_width:    float = 0.127 # mm
+    space_width:    float = 0.127 # mm
+    anchor_exit:    float = 0.0   # deg
+    num_traces:     int   = 2
+    offset_x:       float = 0.0   # mm
+    offset_y:       float = 0.0   # mm
+    chamfer:        float = 0.0   # unit fraction
+    target_layer_id:int   = 0     # kicad layer id, populated later
+    mask_layer_id:  int   = 0     # kicad layer id, populated later
+    random_seed:    str   = None
 
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def __init__(self, board):
@@ -38,14 +45,26 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.board = board
 
         self.m_cancelButton.Bind(wx.EVT_BUTTON, self.quit)
-        self.m_removeButton.Bind(wx.EVT_BUTTON, self.tearup_mesh)
+        self.m_removeButton.Bind(wx.EVT_BUTTON, self.confirm_tearup_mesh)
+        self.m_removeAllButton.Bind(wx.EVT_BUTTON, self.confirm_tearup_mesh_all)
         self.m_generateButton.Bind(wx.EVT_BUTTON, self.generate_mesh)
         self.m_net_prefix.Bind(wx.EVT_TEXT, self.update_net_label)
+        # currently, BOARD.Remove() is b0rked and kicad crashes. Disable function for now.
+        self.m_removeButton.Disable()
+        self.m_removeAllButton.Disable()
 
         self.tearup_confirm_dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
 
         self.nets = { str(wxs) for wxs, netinfo in board.GetNetsByName().items() }
         self.update_net_label(None)
+        for i in range(pcbnew.PCB_LAYER_ID_COUNT):
+            name = board.GetLayerName(i)
+            self.m_layerChoice.Append(name)
+            self.m_maskLayerChoice.Append(name)
+            if name == 'Eco1.User':
+                self.m_maskLayerChoice.SetSelection(i)
+            elif name == 'F.Cu':
+                self.m_layerChoice.SetSelection(i)
 
         self.SetMinSize(self.GetSize())
 
@@ -53,7 +72,19 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         prefix = self.m_net_prefix.Value
         return { net for net in self.nets if net.startswith(prefix) }
 
-    def tearup_mesh(self, evt):
+    def net_names(self):
+        prefix = self.m_net_prefix.Value
+        for i in count():
+            yield f'{prefix}{i}'
+
+    def confirm_tearup_mesh_all(self, evt):
+        self.tearup_confirm_dialog.SetMessage('Do you really want to tear up all autorouted traces on this board? This stap cannot be undone!')
+        self.tearup_confirm_dialog.SetYesNoLabels("Tear up all autorouted traces", "Close")
+
+        if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
+            self.tearup_mesh()
+
+    def confirm_tearup_mesh(self, evt):
         matching = self.get_matching_nets()
 
         if not str(self.m_net_prefix.Value):
@@ -67,20 +98,23 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 for netname in (sorted(matching)[:5] + ['...'] if len(matching) > 5 else [])
         )
         self.tearup_confirm_dialog.SetMessage(message)
-        self.tearup_confirm_dialog.SetYesNoLabels("Tear up {} nets".format(len(matching)), "Close")
+        self.tearup_confirm_dialog.SetYesNoLabels("Tear up {} traces".format(len(matching)), "Close")
 
         if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
-            self.tearup_mesh()
+            self.tearup_mesh(matching)
 
-    def tearup_mesh(self):
+    def tearup_mesh(self, matching=None):
+        count = 0
         for track in self.board.GetTracks():
             if not (track.GetStatus() & pcbnew.TRACK_AR):
                 continue
 
-            if not track.GetNet().GetNetname() in matching:
+            if matching is not None and track.GetNet().GetNetname() not in matching:
                 continue
 
-            board.Remove(track)
+            count += 1
+            self.board.Remove(track)
+        print(f'Tore up {count} trace segments.')
 
     def generate_mesh(self, evt):
         try:
@@ -91,72 +125,48 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 anchor_exit = float(self.m_exitSpin.Value),
                 num_traces  = int(self.m_traceCountSpin.Value),
                 offset_x    = float(self.m_offsetXSpin.Value),
-                offset_y    = float(self.m_offsetYSpin.Value))
+                offset_y    = float(self.m_offsetYSpin.Value),
+                chamfer     = float(self.m_chamferSpin.Value)/100.0,
+                target_layer_id = self.m_layerChoice.GetSelection(),
+                mask_layer_id   = self.m_maskLayerChoice.GetSelection(),
+                random_seed = str(self.m_seedInput.Value) or None)
         except ValueError as e:
             return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
 
-        nets = self.get_matching_nets()
-
-        pads = defaultdict(lambda: [])
-        for module in self.board.GetModules():
-            for pad in module.Pads():
-                net = pad.GetNetname()
-                if net in nets:
-                    pads[net].append(pad)
-
-        for net in nets:
-            if net not in pads:
-                return wx.MessageDialog(self, "Error: No connection pads found for net {}.".format(net)).ShowModal()
-            
-            if len(pads[net]) == 1:
-                return wx.MessageDialog(self, "Error: Only one of two connection pads found for net {}.".format(net)).ShowModal()
-
-            if len(pads[net]) > 2:
-                return wx.MessageDialog(self, "Error: More than two connection pads found for net {}.".format(net)).ShowModal()
-
-        eco1_id = self.board.GetLayerID('Eco1.User')
         mesh_zones = []
         for drawing in self.board.GetDrawings():
-            if drawing.GetLayer() == eco1_id:
+            if drawing.GetLayer() == settings.mask_layer_id:
                 mesh_zones.append(drawing)
 
         if not mesh_zones:
-                return wx.MessageDialog(self, "Error: Could not find any mesh zones on the Eco1.User layer.").ShowModal()
+                return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
 
-        for zone in mesh_zones:
-            anchors = []
-            for module in self.board.GetModules():
-                for foo in module.GraphicalItems():
-                    if not isinstance(foo, pcbnew.TEXTE_MODULE):
-                        continue
+        zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone.GetPolyShape()) ]
+        mask = shapely.ops.unary_union(zone_outlines)
 
-                    if foo.GetText() == "mesh_anchor":
-                        anchors.append(module)
-                        break
+        anchor = [ mod for mod in self.board.GetModules() if mod.GetReference() == self.m_anchorInput.Value ]
+        if len(anchor) == 0:
+            return wx.MessageDialog(self, f'Error: Could not find anchor footprint "{self.m_anchorInput.Value}".').ShowModal()
+        if len(anchor) > 1:
+            return wx.MessageDialog(self, f'Error: Multiple footprints with anchor footprint reference "{self.m_anchorInput.Value}".').ShowModal()
+        anchor, = anchor
 
-            if not anchors:
-                return wx.MessageDialog(self, "Error: No anchor found for mesh zone centered on {:.3f}, {:.3f} mm".format(
-                    zone.GetCenter().x / pcbnew.IU_PER_MM, zone.GetCenter().y / pcbnew.IU_PER_MM
-                            )).ShowModal()
-            if len(anchors) > 1:
-                return wx.MessageDialog(self, "Error: Currently, only a single anchor is supported.").ShowModal()
+        try:
+            def warn(msg):
+                dialog = wx.MessageDialog(self, msg + '\n\nDo you want to abort mesh generation?',
+                        "Mesh Generation Warning").ShowModal()
+                dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
+                dialog.SetYesNoLabels("Abort", "Ignore and continue")
 
-            try:
-                def warn(msg):
-                    dialog = wx.MessageDialog(self, msg + '\n\nDo you want to abort mesh generation?',
-                            "Mesh Generation Warning").ShowModal()
-                    dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
-                    dialog.SetYesNoLabels("Abort", "Ignore and continue")
+                if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
+                    raise AbortError()
 
-                    if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
-                        raise AbortError()
+            self.generate_mesh_backend(mask, anchor, warn=warn, settings=settings)
 
-                self.generate_mesh_backend(zone, anchors, warn=warn, settings=settings)
-
-            except GeneratorError as e:
-                return wx.MessageDialog(self, str(e), "Mesh Generation Error").ShowModal()
-            except AbortError:
-                pass
+        except GeneratorError as e:
+            return wx.MessageDialog(self, str(e), "Mesh Generation Error").ShowModal()
+        except AbortError:
+            pass
 
     def poly_set_to_shapely(self, poly_set):
         for i in range(poly_set.OutlineCount()):
@@ -168,27 +178,18 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 outline_points.append((pcbnew.ToMM(point.x), pcbnew.ToMM(point.y)))
             yield polygon.Polygon(outline_points)
 
-    def generate_mesh_backend(self, zone, anchors, warn=lambda s: None, settings=GeneratorSettings()):
-        anchor, = anchors
-
+    def generate_mesh_backend(self, mask, anchor, warn=lambda s: None, settings=GeneratorSettings()):
         anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingPoly()))
         if len(anchor_outlines) == 0:
             raise GeneratorError('Could not find any outlines for anchor {}'.format(anchor.GetReference()))
         if len(anchor_outlines) > 1:
             warn('Anchor {} has multiple outlines. Using first outline for trace start.')
 
-        zone_outlines = list(self.poly_set_to_shapely(zone.GetPolyShape()))
-        if len(zone_outlines) == 0:
-            raise GeneratorError('Could not find any outlines for mesh zone.')
-        if len(zone_outlines) > 1:
-            raise GeneratorError('Mesh zone has too many outlines (has {}, should have one).'.format(len(zone_outlines)))
-        zone_outline, *_rest = zone_outlines
-        
         width_per_trace = settings.trace_width + settings.space_width
         grid_cell_width = width_per_trace * settings.num_traces * 2
 
-        zone_outline_rotated = affinity.rotate(zone_outline, -settings.mesh_angle, origin=zone_outline.centroid)
-        bbox = zone_outline_rotated.bounds
+        mask_rotated = affinity.rotate(mask, -settings.mesh_angle, origin=mask.centroid)
+        bbox = mask_rotated.bounds
 
         grid_origin = (bbox[0] + settings.offset_x - grid_cell_width, bbox[1] + settings.offset_y - grid_cell_width)
         grid_rows = int((bbox[3] - grid_origin[1]) / grid_cell_width + 2)
@@ -202,7 +203,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 cell = polygon.Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
                 cell = affinity.scale(cell, grid_cell_width, grid_cell_width, origin=(0, 0))
                 cell = affinity.translate(cell, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
-                cell = affinity.rotate(cell, settings.mesh_angle, origin=zone_outline.centroid)
+                cell = affinity.rotate(cell, settings.mesh_angle, origin=mask.centroid)
                 row.append(cell)
             grid.append(row)
 
@@ -220,11 +221,11 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         num_valid = 0
         with DebugOutput('/mnt/c/Users/jaseg/shared/test.svg') as dbg:
-            dbg.add(zone_outline, color='#00000020')
+            dbg.add(mask, color='#00000020')
 
             for y, row in enumerate(grid):
                 for x, cell in enumerate(row):
-                    if zone_outline.contains(cell):
+                    if mask.contains(cell):
                         if cell == exit_cell[0]:
                             color = '#ff00ff80'
                         elif any(ol.overlaps(cell) for ol in anchor_outlines):
@@ -234,7 +235,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         else:
                             num_valid += 1
                             color = '#00ff0080'
-                    elif zone_outline.overlaps(cell):
+                    elif mask.overlaps(cell):
                         color = '#ffff0080'
                     else:
                         color = '#ff000080'
@@ -244,7 +245,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
 
         def is_valid(cell):
-            if not zone_outline.contains(cell):
+            if not mask.contains(cell):
                 return False
             if any(ol.overlaps(cell) for ol in anchor_outlines):
                 return False
@@ -270,15 +271,31 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                     0b1000: 0b0010
                     }[mask]
 
+        rnd_state = random.Random(settings.random_seed)
         def random_iter(it):
             l = list(it)
-            random.shuffle(l)
+            rnd_state.shuffle(l)
             yield from l
+
+        target_layer_id = self.board.GetLayerID('F.Cu') # FIXME make configurable
+        def add_track(segment:geometry.LineString):
+            coords = list(segment.coords)
+            for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
+                if (x1, y1) == (x2, y2): # zero-length track due to zero chamfer
+                    continue
+                track = pcbnew.TRACK(self.board)
+                track.SetStatus(track.GetStatus() | pcbnew.TRACK_AR)
+                track.SetStart(pcbnew.wxPoint(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
+                track.SetEnd(pcbnew.wxPoint(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
+                track.SetWidth(pcbnew.FromMM(settings.trace_width))
+                track.SetLayer(target_layer_id)
+                self.board.Add(track)
 
         not_visited = { (x, y) for x in range(grid_cols) for y in range(grid_rows) if is_valid(grid[y][x]) }
         num_to_visit = len(not_visited)
+        track_count = 0
         with DebugOutput('/mnt/c/Users/jaseg/shared/test2.svg') as dbg:
-            dbg.add(zone_outline, color='#00000020')
+            dbg.add(mask, color='#00000020')
             
             x, y = exit_cell[1]
             visited = 0
@@ -295,23 +312,46 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         x, y, key = n_x, n_y, reciprocal(mask)
                         break
                 else:
-                    for segment in Pattern.render(key, settings.num_traces):
+                    for segment in Pattern.render(key, settings.num_traces, settings.chamfer):
                         segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                         segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
-                        dbg.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ff000080')
+                        stroke_color = {
+                            0b0000: '#ff00ff80',
+                            0b0001: '#ff000080',
+                            0b0010: '#ff000080',
+                            0b0011: '#0000ff80',
+                            0b0100: '#ff000080',
+                            0b0101: '#00ffff80',
+                            0b0110: '#0000ff80',
+                            0b0111: '#00ff0080',
+                            0b1000: '#ff000080',
+                            0b1001: '#0000ff80',
+                            0b1010: '#00ffff80',
+                            0b1011: '#00ff0080',
+                            0b1100: '#0000ff80',
+                            0b1101: '#00ff0080',
+                            0b1110: '#00ff0080',
+                            0b1111: '#ff00ff80',
+                                }[key]
+                        dbg.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
+                        add_track(segment) # FIXME (works, disabled for debug)
+                        track_count += 1
+                    if not stack:
+                        break
                     *stack, (x, y, key) = stack
 
             for foo in anchor_outlines:
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
 
 
+        print(f'Added {track_count} trace segments.')
 
         #pcbnew.Refresh()
         #self.tearup_mesh()
         # TODO generate
 
     def update_net_label(self, evt):
-        self.m_netLabel.SetLabel('{} matching nets'.format(len(self.get_matching_nets())))
+        self.m_netLabel.SetLabel('Like: ' + ', '.join(islice(self.net_names(), 3)) + ', ...')
 
     def quit(self, evt):
         self.Destroy()
@@ -319,48 +359,58 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
 class Pattern:
     @staticmethod
-    def render(key, n):
-        yield from Pattern.LUT[key](n)
+    def render(key, n, cd=0):
+        yield from Pattern.LUT[key](n, cd=math.tan(math.pi/8) * cd)
     
-    def draw_I(n):
+    def draw_I(n, cd):
         for i in range(2*n):
             sp = (i+0.5) * (1/(2*n))
             yield geometry.LineString([(sp, 0), (sp, 1)])
 
-    def draw_U(n):
+    def draw_U(n, cd):
+        pitch = (1/(2*n))
+        cd *= pitch # chamfer depth
         for i in range(n):
-            sp = (i+0.5) * (1/(2*n))
-            yield geometry.LineString([(sp, 0), (sp, 1-sp), (1-sp, 1-sp), (1-sp, 0)])
+            sp = (i+0.5) * pitch
+            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1-sp-cd, 1-sp), (1-sp, 1-sp-cd), (1-sp, 0)])
 
-    def draw_L(n):
+    def draw_L(n, cd):
+        pitch = (1/(2*n))
+        cd *= pitch # chamfer depth
         for i in range(2*n):
-            sp = (i+0.5) * (1/(2*n))
-            yield geometry.LineString([(sp, 0), (sp, 1-sp), (1, 1-sp)])
+            sp = (i+0.5) * pitch
+            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1, 1-sp)])
     
-    def draw_T(n):
+    def draw_T(n, cd):
+        pitch = (1/(2*n))
+        cd *= pitch # chamfer depth
         for i in range(n):
-            sp = (i+0.5) * (1/(2*n))
+            sp = (i+0.5) * pitch
+            # through line
             yield geometry.LineString([(0, sp), (1, sp)])
-            yield geometry.LineString([(0, 1-sp), (sp, 1-sp), (sp, 1)])
-            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp), (1, 1-sp)])
+            # two corners on the opposite side
+            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)])
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)])
 
-    def draw_X(n):
+    def draw_X(n, cd):
+        pitch = (1/(2*n))
+        cd *= pitch # chamfer depth
         for i in range(n):
-            sp = (i+0.5) * (1/(2*n))
-            yield geometry.LineString([(0, sp), (sp, sp), (sp, 0)])
-            yield geometry.LineString([(1-sp, 0), (1-sp, sp), (1, sp)])
-            yield geometry.LineString([(0, 1-sp), (sp, 1-sp), (sp, 1)])
-            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp), (1, 1-sp)])
+            sp = (i+0.5) * pitch
+            yield geometry.LineString([(0, sp), (sp-cd, sp), (sp, sp-cd), (sp, 0)])
+            yield geometry.LineString([(1-sp, 0), (1-sp, sp-cd), (1-sp+cd, sp), (1, sp)])
+            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)])
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)])
 
     def rotate(pattern, deg):
-        def wrapper(n):
-            for segment in pattern(n):
+        def wrapper(n, *args, **kwargs):
+            for segment in pattern(n, *args, **kwargs):
                 yield affinity.rotate(segment, deg, origin=(0.5, 0.5))
         return wrapper
 
-    def raise_error(n):
+    def raise_error(n, *args, **kwargs):
+        #raise ValueError('Tried to render invalid cell. This is a bug.')
         return []
-        raise ValueError('Tried to render invalid cell. This is a bug.')
 
     LUT = {
             0b0000: raise_error,
@@ -407,13 +457,20 @@ class DebugOutputWrapper:
         stroke_color = stroke_color or '#000000ff'
         stroke_width = 0 if stroke_width is None else stroke_width
 
-        if isinstance(obj, polygon.Polygon):
+        if isinstance(obj, geometry.MultiPolygon):
+            out = ''
+            for geom in obj.geoms:
+                out += gen_svg(geom, fill_color, stroke_color, stroke_width, opacity)
+            return out
+
+        elif isinstance(obj, polygon.Polygon):
             exterior_coords = [ ["{},{}".format(*c) for c in obj.exterior.coords] ]
             interior_coords = [ ["{},{}".format(*c) for c in interior.coords] for interior in obj.interiors ]
             all_coords = exterior_coords + interior_coords
             path = " ".join([
                 "M {0} L {1} z".format(coords[0], " L ".join(coords[1:]))
                 for coords in all_coords])
+
         elif isinstance(obj, geometry.LineString):
             all_coords = [ ["{},{}".format(*c) for c in obj.coords] ]
             path = " ".join([
@@ -421,6 +478,7 @@ class DebugOutputWrapper:
                 for coords in all_coords])
         else:
             raise ValueError(f'Unhandled shapely object type {type(obj)}')
+
         return (f'<path fill-rule="evenodd" fill="{fill_color}" opacity="{opacity}" stroke="{stroke_color}" '
                 f'stroke-width="{stroke_width}" d="{path}" />')
     

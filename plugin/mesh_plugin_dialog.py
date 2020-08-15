@@ -17,7 +17,7 @@ import wx.xrc
 class MainDialog ( wx.Dialog ):
 
 	def __init__( self, parent ):
-		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 751,480 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
+		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 765,659 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
 
 		self.SetSizeHints( wx.DefaultSize, wx.DefaultSize )
 
@@ -35,7 +35,7 @@ class MainDialog ( wx.Dialog ):
 
 		fgSizer1.Add( self.m_staticText1, 1, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
 
-		self.m_net_prefix = wx.TextCtrl( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_net_prefix = wx.TextCtrl( self.m_scrolledWindow1, wx.ID_ANY, u"mesh", wx.DefaultPosition, wx.DefaultSize, 0 )
 		fgSizer1.Add( self.m_net_prefix, 2, wx.ALIGN_CENTER_VERTICAL|wx.EXPAND, 5 )
 
 
@@ -168,6 +168,71 @@ class MainDialog ( wx.Dialog ):
 
 		fgSizer1.Add( bSizer9, 2, wx.EXPAND, 5 )
 
+		self.m_staticText20 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Chamfer depth", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText20.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText20, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		bSizer10 = wx.BoxSizer( wx.HORIZONTAL )
+
+		self.m_chamferSpin = wx.SpinCtrlDouble( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 100, 50, 25 )
+		self.m_chamferSpin.SetDigits( 2 )
+		bSizer10.Add( self.m_chamferSpin, 0, wx.ALL, 5 )
+
+		self.m_staticText21 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"% (percent)", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText21.Wrap( -1 )
+
+		bSizer10.Add( self.m_staticText21, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALL, 5 )
+
+
+		fgSizer1.Add( bSizer10, 1, wx.EXPAND, 5 )
+
+		self.m_staticText22 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Layer", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText22.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText22, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		m_layerChoiceChoices = []
+		self.m_layerChoice = wx.Choice( self.m_scrolledWindow1, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, m_layerChoiceChoices, 0 )
+		self.m_layerChoice.SetSelection( 0 )
+		fgSizer1.Add( self.m_layerChoice, 0, wx.ALL, 5 )
+
+		self.m_staticText23 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Mesh outline layer", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText23.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText23, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		m_maskLayerChoiceChoices = []
+		self.m_maskLayerChoice = wx.Choice( self.m_scrolledWindow1, wx.ID_ANY, wx.DefaultPosition, wx.DefaultSize, m_maskLayerChoiceChoices, 0 )
+		self.m_maskLayerChoice.SetSelection( 0 )
+		fgSizer1.Add( self.m_maskLayerChoice, 0, wx.ALL, 5 )
+
+		self.m_staticText24 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Random seed", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText24.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText24, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		bSizer11 = wx.BoxSizer( wx.HORIZONTAL )
+
+		self.m_seedInput = wx.TextCtrl( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, 0 )
+		bSizer11.Add( self.m_seedInput, 0, wx.ALL, 5 )
+
+		self.m_staticText25 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Leave empty for random seed", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText25.Wrap( -1 )
+
+		bSizer11.Add( self.m_staticText25, 0, wx.ALL, 5 )
+
+
+		fgSizer1.Add( bSizer11, 1, wx.EXPAND, 5 )
+
+		self.m_staticText26 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Anchor footprint designator", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText26.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText26, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		self.m_anchorInput = wx.TextCtrl( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, 0 )
+		fgSizer1.Add( self.m_anchorInput, 0, wx.ALL, 5 )
+
 
 		self.m_scrolledWindow1.SetSizer( fgSizer1 )
 		self.m_scrolledWindow1.Layout()
@@ -182,7 +247,10 @@ class MainDialog ( wx.Dialog ):
 
 		bSizer99.Add( ( 0, 0), 1, wx.EXPAND, 5 )
 
-		self.m_removeButton = wx.Button( self, wx.ID_ANY, u"Remove Mesh Traces", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_removeAllButton = wx.Button( self, wx.ID_ANY, u"Remove All Mesh Traces", wx.DefaultPosition, wx.DefaultSize, 0 )
+		bSizer99.Add( self.m_removeAllButton, 0, wx.ALL, 5 )
+
+		self.m_removeButton = wx.Button( self, wx.ID_ANY, u"Remove Matching Mesh Traces", wx.DefaultPosition, wx.DefaultSize, 0 )
 		bSizer99.Add( self.m_removeButton, 0, wx.ALL, 5 )
 
 		self.m_generateButton = wx.Button( self, wx.ID_ANY, u"Generate", wx.DefaultPosition, wx.DefaultSize, 0 )
