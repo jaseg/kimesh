@@ -58,6 +58,9 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         self.nets = { str(wxs) for wxs, netinfo in board.GetNetsByName().items() }
         self.update_net_label(None)
+
+        self.Fit()
+
         for i in range(pcbnew.PCB_LAYER_ID_COUNT):
             name = board.GetLayerName(i)
             self.m_layerChoice.Append(name)
@@ -163,7 +166,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
                     raise AbortError()
 
-            self.generate_mesh_backend(mask, anchor, warn=warn, settings=settings)
+            nets = list(islice(self.net_names(), settings.num_traces))
+            self.generate_mesh_backend(mask, anchor, nets=nets, warn=warn, settings=settings)
 
         except GeneratorError as e:
             return wx.MessageDialog(self, str(e), "Mesh Generation Error").ShowModal()
@@ -180,7 +184,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 outline_points.append((pcbnew.ToMM(point.x), pcbnew.ToMM(point.y)))
             yield polygon.Polygon(outline_points)
 
-    def generate_mesh_backend(self, mask, anchor, warn=lambda s: None, settings=GeneratorSettings()):
+    def generate_mesh_backend(self, mask, anchor, nets, warn=lambda s: None, settings=GeneratorSettings()):
         anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingPoly()))
         if len(anchor_outlines) == 0:
             raise GeneratorError('Could not find any outlines for anchor {}'.format(anchor.GetReference()))
@@ -287,7 +291,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             yield from l
 
         target_layer_id = self.board.GetLayerID('F.Cu') # FIXME make configurable
-        def add_track(segment:geometry.LineString):
+        def add_track(segment:geometry.LineString, net=None):
             coords = list(segment.coords)
             for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
                 if (x1, y1) == (x2, y2): # zero-length track due to zero chamfer
@@ -298,7 +302,15 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 track.SetEnd(pcbnew.wxPoint(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
                 track.SetWidth(pcbnew.FromMM(settings.trace_width))
                 track.SetLayer(target_layer_id)
+                if net is not None:
+                    track.SetNet(net)
                 self.board.Add(track)
+
+        netinfos = []
+        for name in nets:
+            ni = pcbnew.NETINFO_ITEM(self.board, name)
+            self.board.Add(ni)
+            netinfos.append(ni)
 
         not_visited = { (x, y) for x in range(grid_cols) for y in range(grid_rows) if is_valid(grid[y][x]) }
         num_to_visit = len(not_visited)
@@ -322,7 +334,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
                         break
                 else:
-                    for segment in Pattern.render(key, settings.num_traces, settings.chamfer):
+                    for segment, net in Pattern.render(key, settings.num_traces, settings.chamfer):
                         segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                         segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
                         segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
@@ -345,7 +357,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                             0b1111: '#ff00ff80',
                                 }[key]
                         dbg.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
-                        add_track(segment) # FIXME (works, disabled for debug)
+                        add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
                         track_count += 1
                     if not stack:
                         break
@@ -374,23 +386,27 @@ class Pattern:
         yield from Pattern.LUT[key](n, cd=math.tan(math.pi/8) * cd)
     
     def draw_I(n, cd):
-        for i in range(2*n):
+        for i in range(n):
             sp = (i+0.5) * (1/(2*n))
-            yield geometry.LineString([(sp, 0), (sp, 1)])
+            yield geometry.LineString([(sp, 0), (sp, 1)]), i
+            sp = (2*n-1-i+0.5) * (1/(2*n))
+            yield geometry.LineString([(sp, 0), (sp, 1)]), i
 
     def draw_U(n, cd):
         pitch = (1/(2*n))
         cd *= pitch # chamfer depth
         for i in range(n):
             sp = (i+0.5) * pitch
-            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1-sp-cd, 1-sp), (1-sp, 1-sp-cd), (1-sp, 0)])
+            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1-sp-cd, 1-sp), (1-sp, 1-sp-cd), (1-sp, 0)]), i
 
     def draw_L(n, cd):
         pitch = (1/(2*n))
         cd *= pitch # chamfer depth
-        for i in range(2*n):
+        for i in range(n):
             sp = (i+0.5) * pitch
-            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1, 1-sp)])
+            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1, 1-sp)]), i
+            sp = (2*n-1-i+0.5) * pitch
+            yield geometry.LineString([(sp, 0), (sp, 1-sp-cd), (sp+cd, 1-sp), (1, 1-sp)]), i
     
     def draw_T(n, cd):
         pitch = (1/(2*n))
@@ -398,25 +414,25 @@ class Pattern:
         for i in range(n):
             sp = (i+0.5) * pitch
             # through line
-            yield geometry.LineString([(0, sp), (1, sp)])
+            yield geometry.LineString([(0, sp), (1, sp)]), i
             # two corners on the opposite side
-            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)])
-            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)])
+            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)]), i
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)]), i
 
     def draw_X(n, cd):
         pitch = (1/(2*n))
         cd *= pitch # chamfer depth
         for i in range(n):
             sp = (i+0.5) * pitch
-            yield geometry.LineString([(0, sp), (sp-cd, sp), (sp, sp-cd), (sp, 0)])
-            yield geometry.LineString([(1-sp, 0), (1-sp, sp-cd), (1-sp+cd, sp), (1, sp)])
-            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)])
-            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)])
+            yield geometry.LineString([(0, sp), (sp-cd, sp), (sp, sp-cd), (sp, 0)]), i
+            yield geometry.LineString([(1-sp, 0), (1-sp, sp-cd), (1-sp+cd, sp), (1, sp)]), i
+            yield geometry.LineString([(0, 1-sp), (sp-cd, 1-sp), (sp, 1-sp+cd), (sp, 1)]), i
+            yield geometry.LineString([(1-sp, 1), (1-sp, 1-sp+cd), (1-sp+cd, 1-sp), (1, 1-sp)]), i
 
     def rotate(pattern, deg):
         def wrapper(n, *args, **kwargs):
-            for segment in pattern(n, *args, **kwargs):
-                yield affinity.rotate(segment, deg, origin=(0.5, 0.5))
+            for segment, net in pattern(n, *args, **kwargs):
+                yield affinity.rotate(segment, deg, origin=(0.5, 0.5)), net
         return wrapper
 
     def raise_error(n, *args, **kwargs):
