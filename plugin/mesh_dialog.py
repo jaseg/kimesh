@@ -38,6 +38,7 @@ class GeneratorSettings:
     target_layer_id:int   = 0     # kicad layer id, populated later
     mask_layer_id:  int   = 0     # kicad layer id, populated later
     random_seed:    str   = None
+    randomness:     float = 1.0
 
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def __init__(self, board):
@@ -129,7 +130,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 chamfer     = float(self.m_chamferSpin.Value)/100.0,
                 target_layer_id = self.m_layerChoice.GetSelection(),
                 mask_layer_id   = self.m_maskLayerChoice.GetSelection(),
-                random_seed = str(self.m_seedInput.Value) or None)
+                random_seed = str(self.m_seedInput.Value) or None,
+                randomness  = float(self.m_randomnessSpin.Value)/100.0)
         except ValueError as e:
             return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
 
@@ -268,12 +270,19 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                     0b0001: 0b0100,
                     0b0010: 0b1000,
                     0b0100: 0b0001,
-                    0b1000: 0b0010
+                    0b1000: 0b0010,
+                    0b0000: 0b0000
                     }[mask]
 
         rnd_state = random.Random(settings.random_seed)
-        def random_iter(it):
+        def skewed_random_iter(it, mask, randomness):
             l = list(it)
+            if rnd_state.random() < 1.0 - randomness:
+                for x, y, m in l:
+                    if m == mask:
+                        yield x, y, m
+                        break
+                l.remove((x, y, m))
             rnd_state.shuffle(l)
             yield from l
 
@@ -300,21 +309,23 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             x, y = exit_cell[1]
             visited = 0
             key = 0
+            entry_dir = 0
             stack = []
             while not_visited or stack:
-                for n_x, n_y, mask in random_iter(iter_neighbors(x, y)):
+                for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
                     if (n_x, n_y) in not_visited:
                         dbg.add(grid[n_y][n_x], color=virihex(visited, max=num_to_visit), opacity=0.2)
-                        key |= mask
-                        stack.append((x, y, key))
+                        key |= bmask
+                        stack.append((x, y, key, bmask))
                         not_visited.remove((n_x, n_y))
                         visited += 1
-                        x, y, key = n_x, n_y, reciprocal(mask)
+                        x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
                         break
                 else:
                     for segment in Pattern.render(key, settings.num_traces, settings.chamfer):
                         segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                         segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
+                        segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
                         stroke_color = {
                             0b0000: '#ff00ff80',
                             0b0001: '#ff000080',
@@ -338,7 +349,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         track_count += 1
                     if not stack:
                         break
-                    *stack, (x, y, key) = stack
+                    *stack, (x, y, key, entry_dir) = stack
 
             for foo in anchor_outlines:
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')

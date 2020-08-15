@@ -17,7 +17,7 @@ import wx.xrc
 class MainDialog ( wx.Dialog ):
 
 	def __init__( self, parent ):
-		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 765,659 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
+		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 809,762 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
 
 		self.SetSizeHints( wx.DefaultSize, wx.DefaultSize )
 
@@ -232,6 +232,25 @@ class MainDialog ( wx.Dialog ):
 
 		self.m_anchorInput = wx.TextCtrl( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, 0 )
 		fgSizer1.Add( self.m_anchorInput, 0, wx.ALL, 5 )
+
+		self.m_staticText28 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"Routing randomness", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText28.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText28, 0, wx.ALL, 5 )
+
+		bSizer12 = wx.BoxSizer( wx.HORIZONTAL )
+
+		self.m_randomnessSpin = wx.SpinCtrlDouble( self.m_scrolledWindow1, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 100, 25, 25 )
+		self.m_randomnessSpin.SetDigits( 0 )
+		bSizer12.Add( self.m_randomnessSpin, 0, wx.ALL, 5 )
+
+		self.m_staticText211 = wx.StaticText( self.m_scrolledWindow1, wx.ID_ANY, u"% (percent)", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText211.Wrap( -1 )
+
+		bSizer12.Add( self.m_staticText211, 0, wx.ALL, 5 )
+
+
+		fgSizer1.Add( bSizer12, 1, wx.EXPAND, 5 )
 
 
 		self.m_scrolledWindow1.SetSizer( fgSizer1 )
