@@ -226,7 +226,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         exit_cell = possible_exits[0] # might overlap multiple if not orthogonal
 
         num_valid = 0
-        with DebugOutput('/mnt/c/Users/jaseg/shared/test.svg') as dbg:
+        with DebugOutput('/mnt/c/Users/jaseg/shared/dbg_grid.svg') as dbg:
             dbg.add(mask, color='#00000020')
 
             for y, row in enumerate(grid):
@@ -315,22 +315,33 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         not_visited = { (x, y) for x in range(grid_cols) for y in range(grid_rows) if is_valid(grid[y][x]) }
         num_to_visit = len(not_visited)
         track_count = 0
-        with DebugOutput('/mnt/c/Users/jaseg/shared/test2.svg') as dbg:
-            dbg.add(mask, color='#00000020')
+        with DebugOutput('/mnt/c/Users/jaseg/shared/dbg_cells.svg') as dbg_cells,\
+             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_composite.svg') as dbg_composite,\
+             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_tiles.svg') as dbg_tiles,\
+             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_traces.svg') as dbg_traces:
+            dbg_cells.add(mask, color='#00000020')
+            dbg_composite.add(mask, color='#00000020')
+            dbg_traces.add(mask, color='#00000020')
+            dbg_tiles.add(mask, color='#00000020')
             
             x, y = exit_cell[1]
             visited = 0
             key = 0
             entry_dir = 0
             stack = []
+            depth = 0
+            max_depth = 0
             while not_visited or stack:
                 for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
                     if (n_x, n_y) in not_visited:
-                        dbg.add(grid[n_y][n_x], color=virihex(visited, max=num_to_visit), opacity=0.2)
+                        dbg_composite.add(grid[n_y][n_x], color=('visit_depth', depth), opacity=1.0)
+                        dbg_cells.add(grid[n_y][n_x], color=('visit_depth', depth), opacity=1.0)
                         key |= bmask
-                        stack.append((x, y, key, bmask))
+                        stack.append((x, y, key, bmask, depth))
                         not_visited.remove((n_x, n_y))
                         visited += 1
+                        depth += 1
+                        max_depth = max(depth, max_depth)
                         x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
                         break
                 else:
@@ -339,32 +350,41 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
                         segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
                         stroke_color = {
-                            0b0000: '#ff00ff80',
-                            0b0001: '#ff000080',
-                            0b0010: '#ff000080',
-                            0b0011: '#0000ff80',
-                            0b0100: '#ff000080',
-                            0b0101: '#00ffff80',
-                            0b0110: '#0000ff80',
-                            0b0111: '#00ff0080',
-                            0b1000: '#ff000080',
-                            0b1001: '#0000ff80',
-                            0b1010: '#00ffff80',
-                            0b1011: '#00ff0080',
-                            0b1100: '#0000ff80',
-                            0b1101: '#00ff0080',
-                            0b1110: '#00ff0080',
-                            0b1111: '#ff00ff80',
+                            0b0000: '#ff00ffc0',
+                            0b0001: '#a00000c0',
+                            0b0010: '#a00000c0',
+                            0b0011: '#0000a0c0',
+                            0b0100: '#a00000c0',
+                            0b0101: '#303030c0',
+                            0b0110: '#0000a0c0',
+                            0b0111: '#00a000c0',
+                            0b1000: '#a00000c0',
+                            0b1001: '#0000a0c0',
+                            0b1010: '#303030c0',
+                            0b1011: '#00a000c0',
+                            0b1100: '#0000a0c0',
+                            0b1101: '#00a000c0',
+                            0b1110: '#00a000c0',
+                            0b1111: '#ff00ffc0',
                                 }[key]
-                        dbg.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
-                        add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
+                        dbg_composite.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ffffff60')
+                        dbg_traces.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#000000ff')
+                        dbg_tiles.add(segment, stroke_width=settings.trace_width, color='#ff000000',
+                                stroke_color=stroke_color)
+                        #add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
                         track_count += 1
                     if not stack:
                         break
-                    *stack, (x, y, key, entry_dir) = stack
+                    *stack, (x, y, key, entry_dir, depth) = stack
+
+            dbg_cells.scale_colors('visit_depth', max_depth)
+            dbg_composite.scale_colors('visit_depth', max_depth)
 
             for foo in anchor_outlines:
-                dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
+                dbg_cells.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
+                dbg_traces.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
+                dbg_composite.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
+                dbg_tiles.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
 
 
         print(f'Added {track_count} trace segments.')
@@ -475,6 +495,13 @@ class DebugOutputWrapper:
     def __init__(self, f):
         self.f = f
         self.objs = []
+
+    def scale_colors(self, group, max_value):
+        self.objs = [
+                (obj,
+                    (virihex(color[1], max=max_value) if isinstance(color, tuple) and color[0] == group else color,
+                        *rest))
+            for obj, (color, *rest) in self.objs ]
 
     def add(self, obj, color=None, stroke_width=0, stroke_color=None, opacity=1.0):
         self.objs.append((obj, (color, stroke_color, stroke_width, opacity)))
