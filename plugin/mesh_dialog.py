@@ -324,6 +324,23 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             dbg_traces.add(mask, color='#00000020')
             dbg_tiles.add(mask, color='#00000020')
             
+            TILE_COLORS = {
+                0b0000: '#ffcc00ff',
+                0b0001: '#d40000ff',
+                0b0010: '#d40000ff',
+                0b0011: '#ff6600ff',
+                0b0100: '#d40000ff',
+                0b0101: '#00d400ff',
+                0b0110: '#ff6600ff',
+                0b0111: '#00ccffff',
+                0b1000: '#d40000ff',
+                0b1001: '#ff6600ff',
+                0b1010: '#00d400ff',
+                0b1011: '#00ccffff',
+                0b1100: '#ff6600ff',
+                0b1101: '#00ccffff',
+                0b1110: '#00ccffff',
+                0b1111: '#ffcc00ff'}
             x, y = exit_cell[1]
             visited = 0
             key = 0
@@ -331,7 +348,41 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             stack = []
             depth = 0
             max_depth = 0
+            i = 0
+            past_tiles = {}
+            def dump_output(i):
+                with DebugOutput(f'/mnt/c/Users/jaseg/Pictures/kicad-mesh/per-tile/step{i}.svg') as dbg_per_tile:
+                    dbg_per_tile.add(mask, color='#00000020')
+                    for foo in anchor_outlines:
+                        dbg_per_tile.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
+                        
+                    for le_y, row in enumerate(grid):
+                        for le_x, cell in enumerate(row):
+                            if mask.contains(cell):
+                                if cell == exit_cell[0]:
+                                    color = '#ff00ff80'
+                                elif any(ol.overlaps(cell) for ol in anchor_outlines):
+                                    color = '#ffff0080'
+                                elif any(ol.contains(cell) for ol in anchor_outlines):
+                                    color = '#ff000080'
+                                else:
+                                    color = '#00ff0080'
+                            elif mask.overlaps(cell):
+                                color = '#ffff0080'
+                            else:
+                                color = '#ff000080'
+                            dbg_per_tile.add(cell, color=color)
+
+                    for (le_x, le_y), (stroke_color, segments) in past_tiles.items():
+                        for segment in segments:
+                            segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
+                            segment = affinity.translate(segment, grid_origin[0] + le_x*grid_cell_width, grid_origin[1] + le_y*grid_cell_width)
+                            segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
+                            dbg_per_tile.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
+
+            armed = False
             while not_visited or stack:
+                print(f'iteration {i}: {len(not_visited)}, {len(stack)}')
                 for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
                     if (n_x, n_y) in not_visited:
                         dbg_composite.add(grid[n_y][n_x], color=('visit_depth', depth), opacity=1.0)
@@ -341,40 +392,37 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         not_visited.remove((n_x, n_y))
                         visited += 1
                         depth += 1
+                        i += 1
+                        armed = True
                         max_depth = max(depth, max_depth)
+
+                        past_tiles[x, y] = (TILE_COLORS[key],
+                                [segment
+                                    for segment, _net in Pattern.render(key, settings.num_traces, settings.chamfer) ])
+
                         x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
+                        dump_output(i)
                         break
                 else:
+                    stroke_color = TILE_COLORS[key]
+                    past_tiles[x, y] = (stroke_color,
+                            [segment
+                                for segment, _net in Pattern.render(key, settings.num_traces, settings.chamfer) ])
                     for segment, net in Pattern.render(key, settings.num_traces, settings.chamfer):
                         segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                         segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
                         segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
-                        stroke_color = {
-                            0b0000: '#ff00ffc0',
-                            0b0001: '#a00000c0',
-                            0b0010: '#a00000c0',
-                            0b0011: '#0000a0c0',
-                            0b0100: '#a00000c0',
-                            0b0101: '#303030c0',
-                            0b0110: '#0000a0c0',
-                            0b0111: '#00a000c0',
-                            0b1000: '#a00000c0',
-                            0b1001: '#0000a0c0',
-                            0b1010: '#303030c0',
-                            0b1011: '#00a000c0',
-                            0b1100: '#0000a0c0',
-                            0b1101: '#00a000c0',
-                            0b1110: '#00a000c0',
-                            0b1111: '#ff00ffc0',
-                                }[key]
                         dbg_composite.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ffffff60')
                         dbg_traces.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#000000ff')
-                        dbg_tiles.add(segment, stroke_width=settings.trace_width, color='#ff000000',
-                                stroke_color=stroke_color)
+                        dbg_tiles.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
                         #add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
                         track_count += 1
                     if not stack:
                         break
+                    if armed:
+                        i += 1
+                        dump_output(i)
+                        armed = False
                     *stack, (x, y, key, entry_dir, depth) = stack
 
             dbg_cells.scale_colors('visit_depth', max_depth)
