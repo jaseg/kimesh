@@ -303,7 +303,6 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             rnd_state.shuffle(l)
             yield from l
 
-        target_layer_id = self.board.GetLayerID('F.Cu') # FIXME make configurable
         def add_track(segment:geometry.LineString, net=None):
             coords = list(segment.coords)
             for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
@@ -314,7 +313,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 track.SetStart(pcbnew.wxPoint(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
                 track.SetEnd(pcbnew.wxPoint(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
                 track.SetWidth(pcbnew.FromMM(settings.trace_width))
-                track.SetLayer(target_layer_id)
+                track.SetLayer(settings.target_layer_id)
                 if net is not None:
                     track.SetNet(net)
                 self.board.Add(track)
