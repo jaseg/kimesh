@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ###########################################################################
-## Python code generated with wxFormBuilder (version Oct 26 2018)
+## Python code generated with wxFormBuilder (version Oct  9 2020)
 ## http://www.wxformbuilder.org/
 ##
 ## PLEASE DO *NOT* EDIT THIS FILE!
@@ -70,7 +70,7 @@ class MainDialog ( wx.Dialog ):
 
 		bSizer5 = wx.BoxSizer( wx.HORIZONTAL )
 
-		self.m_traceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 0.127, 0.1 )
+		self.m_traceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 0.250000, 0.1 )
 		self.m_traceSpin.SetDigits( 3 )
 		bSizer5.Add( self.m_traceSpin, 0, wx.ALL, 5 )
 
@@ -89,7 +89,7 @@ class MainDialog ( wx.Dialog ):
 
 		bSizer6 = wx.BoxSizer( wx.HORIZONTAL )
 
-		self.m_spaceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 0.127, 0.1 )
+		self.m_spaceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 0.250000, 0.1 )
 		self.m_spaceSpin.SetDigits( 3 )
 		bSizer6.Add( self.m_spaceSpin, 0, wx.ALL, 5 )
 
