@@ -146,8 +146,16 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         if not mesh_zones:
                 return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
 
+
+        outlines = pcbnew.SHAPE_POLY_SET()
+        self.board.GetBoardPolygonOutlines(outlines, "")
+        board_outlines = list(self.poly_set_to_shapely(outlines))
+        board_mask = shapely.ops.unary_union(board_outlines)
+
         zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone.GetPolyShape()) ]
-        mask = shapely.ops.unary_union(zone_outlines)
+        zone_mask = shapely.ops.unary_union(zone_outlines)
+
+        mask = zone_mask.intersection(board_mask)
 
         anchor = [ mod for mod in self.board.GetModules() if mod.GetReference() == self.m_anchorInput.Value ]
         if len(anchor) == 0:
@@ -178,11 +186,16 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         for i in range(poly_set.OutlineCount()):
             outline = poly_set.Outline(i)
 
-            outline_points = []
-            for j in range(outline.PointCount()):
-                point = outline.CPoint(j)
-                outline_points.append((pcbnew.ToMM(point.x), pcbnew.ToMM(point.y)))
-            yield polygon.Polygon(outline_points)
+            def shape_line_chain_to_coords(line_chain):
+                points = []
+                for j in range(line_chain.PointCount()):
+                    point = line_chain.CPoint(j)
+                    points.append((pcbnew.ToMM(point.x), pcbnew.ToMM(point.y)))
+                return points
+
+            exterior = shape_line_chain_to_coords(outline)
+            interiors = [ shape_line_chain_to_coords(poly_set.Hole(i, j)) for j in range(poly_set.HoleCount(i)) ]
+            yield polygon.Polygon(exterior, interiors)
 
     def generate_mesh_backend(self, mask, anchor, nets, warn=lambda s: None, settings=GeneratorSettings()):
         anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingPoly()))
