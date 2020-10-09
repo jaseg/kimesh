@@ -239,7 +239,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         exit_cell = possible_exits[0] # might overlap multiple if not orthogonal
 
         num_valid = 0
-        with DebugOutput('/mnt/c/Users/jaseg/shared/dbg_grid.svg') as dbg:
+        with DebugOutput('dbg_grid.svg') as dbg:
             dbg.add(mask, color='#00000020')
 
             for y, row in enumerate(grid):
@@ -328,10 +328,10 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         not_visited = { (x, y) for x in range(grid_cols) for y in range(grid_rows) if is_valid(grid[y][x]) }
         num_to_visit = len(not_visited)
         track_count = 0
-        with DebugOutput('/mnt/c/Users/jaseg/shared/dbg_cells.svg') as dbg_cells,\
-             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_composite.svg') as dbg_composite,\
-             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_tiles.svg') as dbg_tiles,\
-             DebugOutput('/mnt/c/Users/jaseg/shared/dbg_traces.svg') as dbg_traces:
+        with DebugOutput('dbg_cells.svg') as dbg_cells,\
+             DebugOutput('dbg_composite.svg') as dbg_composite,\
+             DebugOutput('dbg_tiles.svg') as dbg_tiles,\
+             DebugOutput('dbg_traces.svg') as dbg_traces:
             dbg_cells.add(mask, color='#00000020')
             dbg_composite.add(mask, color='#00000020')
             dbg_traces.add(mask, color='#00000020')
@@ -364,7 +364,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             i = 0
             past_tiles = {}
             def dump_output(i):
-                with DebugOutput(f'/mnt/c/Users/jaseg/Pictures/kicad-mesh/per-tile/step{i}.svg') as dbg_per_tile:
+                with DebugOutput(f'per-tile/step{i}.svg') as dbg_per_tile:
                     dbg_per_tile.add(mask, color='#00000020')
                     for foo in anchor_outlines:
                         dbg_per_tile.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
@@ -414,7 +414,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                                     for segment, _net in Pattern.render(key, settings.num_traces, settings.chamfer) ])
 
                         x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
-                        dump_output(i)
+                        #dump_output(i)
                         break
                 else:
                     stroke_color = TILE_COLORS[key]
@@ -428,13 +428,13 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         dbg_composite.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ffffff60')
                         dbg_traces.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#000000ff')
                         dbg_tiles.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
-                        #add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
+                        add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
                         track_count += 1
                     if not stack:
                         break
                     if armed:
                         i += 1
-                        dump_output(i)
+                        #dump_output(i)
                         armed = False
                     *stack, (x, y, key, entry_dir, depth) = stack
 
@@ -547,6 +547,8 @@ def virihex(val, max=1.0, alpha=1.0):
 
 @contextmanager
 def DebugOutput(filename):
+    from os import path
+    filename = path.join('/tmp', filename)
     with open(filename, 'w') as f:
         wrapper = DebugOutputWrapper(f)
         yield wrapper
