@@ -65,7 +65,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             name = board.GetLayerName(i)
             self.m_layerChoice.Append(name)
             self.m_maskLayerChoice.Append(name)
-            if name == 'Eco1.User':
+            if name == 'User.Eco1':
                 self.m_maskLayerChoice.SetSelection(i)
             elif name == 'F.Cu':
                 self.m_layerChoice.SetSelection(i)
