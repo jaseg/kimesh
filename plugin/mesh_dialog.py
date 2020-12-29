@@ -1,10 +1,12 @@
 from collections import defaultdict
-from dataclasses import dataclass
+import dataclasses
 from contextlib import contextmanager
 import textwrap
 import random
 import math
 from itertools import count, islice
+import json
+from os import path
 
 import wx
 
@@ -25,12 +27,14 @@ class GeneratorError(ValueError):
 class AbortError(SystemError):
     pass
 
-@dataclass
+@dataclasses.dataclass
 class GeneratorSettings:
     mesh_angle:     float = 0.0   # deg
     trace_width:    float = 0.127 # mm
     space_width:    float = 0.127 # mm
+    edge_clearance: float = 1.5   # mm
     anchor_exit:    float = 0.0   # deg
+    anchor:         str   = None  # Footprint designator
     num_traces:     int   = 2
     offset_x:       float = 0.0   # mm
     offset_y:       float = 0.0   # mm
@@ -39,6 +43,24 @@ class GeneratorSettings:
     mask_layer_id:  int   = 0     # kicad layer id, populated later
     random_seed:    str   = None
     randomness:     float = 1.0
+
+    def serialize(self):
+        d = dataclasses.asdict(self)
+        d['kimesh_settings_version'] = '1.0.0'
+        return json.dumps(d).encode()
+
+    @classmethod
+    def deserialize(cls, data):
+        d = json.loads(data.decode())
+        version = d.pop('kimesh_settings_version')
+        vtup = tuple(map(int, version.split('.')))
+        if vtup > (2, 0, 0):
+            raise cls.VersionError("Project kimesh settings file is too new for this plugin's version.")
+        return cls(**d)
+
+    class VersionError(ValueError):
+        pass
+
 
 class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def __init__(self, board):
@@ -67,8 +89,31 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             self.m_maskLayerChoice.Append(name)
             if name == 'User.Eco1':
                 self.m_maskLayerChoice.SetSelection(i)
-            elif name == 'F.Cu':
+            elif name == 'B.Cu':
                 self.m_layerChoice.SetSelection(i)
+
+        if path.isfile(self.settings_fn()):
+            with open(self.settings_fn(), 'rb') as f:
+                try:
+                    settings = GeneratorSettings.deserialize(f.read())
+
+                    self.m_angleSpin.Value = settings.mesh_angle
+                    self.m_traceSpin.Value = settings.trace_width
+                    self.m_spaceSpin.Value = settings.space_width
+                    self.m_exitSpin.Value = settings.anchor_exit
+                    self.m_anchorInput.Value = settings.anchor
+                    self.m_traceCountSpin.Value = settings.num_traces
+                    self.m_offsetXSpin.Value = settings.offset_x
+                    self.m_offsetYSpin.Value = settings.offset_y
+                    self.m_chamferSpin.Value = settings.chamfer*100.0
+                    self.m_layerChoice.SetSelection(settings.target_layer_id)
+                    self.m_maskLayerChoice.SetSelection(settings.mask_layer_id)
+                    self.m_seedInput.Value = settings.random_seed or ''
+                    self.m_randomnessSpin.Value = settings.randomness*100.0
+                    self.m_edgeClearanceSpin.Value = settings.edge_clearance
+
+                except GeneratorSettings.VersionError as e:
+                    wx.MessageDialog(self, "Cannot load settings: {}.".format(e), "File I/O error").ShowModal()
 
         self.SetMinSize(self.GetSize())
 
@@ -120,13 +165,18 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             self.board.Remove(track)
         print(f'Tore up {count} trace segments.')
 
+    def settings_fn(self):
+        return path.join(path.dirname(self.board.GetFileName()), 'last_kimesh_settings.json')
+
     def generate_mesh(self, evt):
         try:
             settings = GeneratorSettings(
                 mesh_angle  = float(self.m_angleSpin.Value),
                 trace_width = float(self.m_traceSpin.Value),
                 space_width = float(self.m_spaceSpin.Value),
+                edge_clearance = float(self.m_edgeClearanceSpin.Value),
                 anchor_exit = float(self.m_exitSpin.Value),
+                anchor      = str(self.m_anchorInput.Value),
                 num_traces  = int(self.m_traceCountSpin.Value),
                 offset_x    = float(self.m_offsetXSpin.Value),
                 offset_y    = float(self.m_offsetYSpin.Value),
@@ -137,6 +187,13 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 randomness  = float(self.m_randomnessSpin.Value)/100.0)
         except ValueError as e:
             return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
+
+        try:
+            with open(self.settings_fn(), 'wb') as f:
+                f.write(settings.serialize())
+                print('Saved settings to', f.name)
+        except:
+            wx.MessageDialog(self, "Cannot save settings: {}.".format(e), "File I/O error").ShowModal()
 
         mesh_zones = []
         for drawing in self.board.GetDrawings():
@@ -151,13 +208,14 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         self.board.GetBoardPolygonOutlines(outlines, "")
         board_outlines = list(self.poly_set_to_shapely(outlines))
         board_mask = shapely.ops.unary_union(board_outlines)
+        board_mask = board_mask.buffer(-settings.edge_clearance)
 
         zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone.GetPolyShape()) ]
         zone_mask = shapely.ops.unary_union(zone_outlines)
 
         mask = zone_mask.intersection(board_mask)
 
-        anchor = [ mod for mod in self.board.GetModules() if mod.GetReference() == self.m_anchorInput.Value ]
+        anchor = [ mod for mod in self.board.GetModules() if mod.GetReference() == settings.anchor ]
         if len(anchor) == 0:
             return wx.MessageDialog(self, f'Error: Could not find anchor footprint "{self.m_anchorInput.Value}".').ShowModal()
         if len(anchor) > 1:
@@ -546,7 +604,6 @@ def virihex(val, max=1.0, alpha=1.0):
 
 @contextmanager
 def DebugOutput(filename):
-    from os import path
     filename = path.join('/tmp', filename)
     with open(filename, 'w') as f:
         wrapper = DebugOutputWrapper(f)

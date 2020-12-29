@@ -101,6 +101,25 @@ class MainDialog ( wx.Dialog ):
 
 		fgSizer1.Add( bSizer6, 1, wx.EXPAND, 5 )
 
+		self.m_staticText261 = wx.StaticText( self, wx.ID_ANY, u"Board edge clearance", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText261.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText261, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		bSizer51 = wx.BoxSizer( wx.HORIZONTAL )
+
+		self.m_edgeClearanceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 1.500000, 0.1 )
+		self.m_edgeClearanceSpin.SetDigits( 3 )
+		bSizer51.Add( self.m_edgeClearanceSpin, 0, wx.ALL, 5 )
+
+		self.m_staticText61 = wx.StaticText( self, wx.ID_ANY, u"mm", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText61.Wrap( -1 )
+
+		bSizer51.Add( self.m_staticText61, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALL, 5 )
+
+
+		fgSizer1.Add( bSizer51, 1, wx.EXPAND, 5 )
+
 		self.m_staticText11 = wx.StaticText( self, wx.ID_ANY, u"Anchor exit direction", wx.DefaultPosition, wx.DefaultSize, 0 )
 		self.m_staticText11.Wrap( -1 )
 
