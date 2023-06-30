@@ -29,17 +29,9 @@ class AbortError(SystemError):
 
 @dataclasses.dataclass
 class GeneratorSettings:
-    mesh_angle:     float = 0.0   # deg
-    trace_width:    float = 0.127 # mm
-    space_width:    float = 0.127 # mm
     edge_clearance: float = 1.5   # mm
-    anchor_exit:    float = 0.0   # deg
     anchor:         str   = None  # Footprint designator
-    num_traces:     int   = 2
-    offset_x:       float = 0.0   # mm
-    offset_y:       float = 0.0   # mm
     chamfer:        float = 0.0   # unit fraction
-    target_layer_id:int   = 0     # kicad layer id, populated later
     mask_layer_id:  int   = 0     # kicad layer id, populated later
     random_seed:    str   = None
     randomness:     float = 1.0
@@ -69,12 +61,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         self.m_cancelButton.Bind(wx.EVT_BUTTON, self.quit)
         self.m_removeButton.Bind(wx.EVT_BUTTON, self.confirm_tearup_mesh)
-        self.m_removeAllButton.Bind(wx.EVT_BUTTON, self.confirm_tearup_mesh_all)
         self.m_generateButton.Bind(wx.EVT_BUTTON, self.generate_mesh)
         self.m_net_prefix.Bind(wx.EVT_TEXT, self.update_net_label)
-        # currently, BOARD.Remove() is b0rked and kicad crashes. Disable function for now.
-        self.m_removeButton.Disable()
-        self.m_removeAllButton.Disable()
 
         self.tearup_confirm_dialog = wx.MessageDialog(self, "", style=wx.YES_NO | wx.NO_DEFAULT)
 
@@ -83,37 +71,32 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         self.Fit()
 
-        for i in range(pcbnew.PCB_LAYER_ID_COUNT):
-            name = board.GetLayerName(i)
-            self.m_layerChoice.Append(name)
-            self.m_maskLayerChoice.Append(name)
-            if name == 'User.Eco1':
-                self.m_maskLayerChoice.SetSelection(i)
-            elif name == 'B.Cu':
-                self.m_layerChoice.SetSelection(i)
-
+        settings = None
         if path.isfile(self.settings_fn()):
             with open(self.settings_fn(), 'rb') as f:
                 try:
                     settings = GeneratorSettings.deserialize(f.read())
-
-                    self.m_angleSpin.Value = settings.mesh_angle
-                    self.m_traceSpin.Value = settings.trace_width
-                    self.m_spaceSpin.Value = settings.space_width
-                    self.m_exitSpin.Value = settings.anchor_exit
-                    self.m_anchorInput.Value = settings.anchor
-                    self.m_traceCountSpin.Value = settings.num_traces
-                    self.m_offsetXSpin.Value = settings.offset_x
-                    self.m_offsetYSpin.Value = settings.offset_y
-                    self.m_chamferSpin.Value = settings.chamfer*100.0
-                    self.m_layerChoice.SetSelection(settings.target_layer_id)
-                    self.m_maskLayerChoice.SetSelection(settings.mask_layer_id)
-                    self.m_seedInput.Value = settings.random_seed or ''
-                    self.m_randomnessSpin.Value = settings.randomness*100.0
-                    self.m_edgeClearanceSpin.Value = settings.edge_clearance
-
                 except GeneratorSettings.VersionError as e:
                     wx.MessageDialog(self, "Cannot load settings: {}.".format(e), "File I/O error").ShowModal()
+
+        for i in range(pcbnew.PCB_LAYER_ID_COUNT):
+            name = board.GetLayerName(i)
+            self.m_maskLayerChoice.Append(name)
+            if name == 'User.Eco1':
+                self.m_maskLayerChoice.SetSelection(i)
+
+        for i, fp in enumerate(self.board.Footprints()):
+            ref = fp.GetReference()
+            self.m_anchorChoice.Append(ref)
+            if settings and ref == settings.anchor:
+                self.m_anchorChoice.SetSelection(i)
+
+        if settings:
+            self.m_chamferSpin.Value = settings.chamfer*100.0
+            self.m_maskLayerChoice.SetSelection(settings.mask_layer_id)
+            self.m_seedInput.Value = settings.random_seed or ''
+            self.m_randomnessSpin.Value = settings.randomness*100.0
+            self.m_edgeClearanceSpin.Value = settings.edge_clearance
 
         self.SetMinSize(self.GetSize())
 
@@ -121,26 +104,14 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         prefix = self.m_net_prefix.Value
         return { net for net in self.nets if net.startswith(prefix) }
 
-    def net_names(self):
-        prefix = self.m_net_prefix.Value
-        for i in count():
-            yield f'{prefix}{i}'
-
-    def confirm_tearup_mesh_all(self, evt):
-        self.tearup_confirm_dialog.SetMessage('Do you really want to tear up all autorouted traces on this board? This stap cannot be undone!')
-        self.tearup_confirm_dialog.SetYesNoLabels("Tear up all autorouted traces", "Close")
-
-        if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
-            self.tearup_mesh()
-
     def confirm_tearup_mesh(self, evt):
         matching = self.get_matching_nets()
 
         if not str(self.m_net_prefix.Value):
-            message = "You have set an empty net prefix. This will match ALL {} nets on the board. Do you really want to tear up all autorouted tracks? This cannot be undone!"
+            message = "You have set an empty net prefix. This will match ALL {} nets on the board. Do you really want to tear up all tracks? This cannot be undone!"
 
         else:
-            message = "Do you really want to tear up all autorouted traces of the {} matching nets on this board? This step cannot be undone!"
+            message = "Do you really want to tear up all traces of the {} matching nets on this board? This step cannot be undone!"
 
         message = message.format(len(matching)) + "\n\nMatching nets:\n" + ", ".join(
                 '""' if not netname else (netname[:16] + '...' if len(netname) > 16 else netname)
@@ -155,9 +126,6 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def tearup_mesh(self, matching=None):
         count = 0
         for track in self.board.GetTracks():
-            if not (track.GetStatus() & pcbnew.TRACK_AR):
-                continue
-
             if matching is not None and track.GetNet().GetNetname() not in matching:
                 continue
 
@@ -171,17 +139,9 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
     def generate_mesh(self, evt):
         try:
             settings = GeneratorSettings(
-                mesh_angle  = float(self.m_angleSpin.Value),
-                trace_width = float(self.m_traceSpin.Value),
-                space_width = float(self.m_spaceSpin.Value),
                 edge_clearance = float(self.m_edgeClearanceSpin.Value),
-                anchor_exit = float(self.m_exitSpin.Value),
-                anchor      = str(self.m_anchorInput.Value),
-                num_traces  = int(self.m_traceCountSpin.Value),
-                offset_x    = float(self.m_offsetXSpin.Value),
-                offset_y    = float(self.m_offsetYSpin.Value),
+                anchor      = str(list(self.board.Footprints())[self.m_anchorChoice.GetSelection()].GetReference()),
                 chamfer     = float(self.m_chamferSpin.Value)/100.0,
-                target_layer_id = self.m_layerChoice.GetSelection(),
                 mask_layer_id   = self.m_maskLayerChoice.GetSelection(),
                 random_seed = str(self.m_seedInput.Value) or None,
                 randomness  = float(self.m_randomnessSpin.Value)/100.0)
@@ -195,32 +155,44 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         except:
             wx.MessageDialog(self, "Cannot save settings: {}.".format(e), "File I/O error").ShowModal()
 
-        mesh_zones = []
-        for drawing in self.board.GetDrawings():
-            if drawing.GetLayer() == settings.mask_layer_id:
-                mesh_zones.append(drawing)
-
-        if not mesh_zones:
-                return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
-
-
-        outlines = pcbnew.SHAPE_POLY_SET()
-        self.board.GetBoardPolygonOutlines(outlines, "")
-        board_outlines = list(self.poly_set_to_shapely(outlines))
-        board_mask = shapely.ops.unary_union(board_outlines)
-        board_mask = board_mask.buffer(-settings.edge_clearance)
-
-        zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone.GetPolyShape()) ]
-        zone_mask = shapely.ops.unary_union(zone_outlines)
-
-        mask = zone_mask.intersection(board_mask)
-
-        anchor = [ mod for mod in self.board.GetModules() if mod.GetReference() == settings.anchor ]
+        anchor = [ fp for fp in self.board.Footprints() if fp.GetReference() == settings.anchor ]
         if len(anchor) == 0:
             return wx.MessageDialog(self, f'Error: Could not find anchor footprint "{self.m_anchorInput.Value}".').ShowModal()
         if len(anchor) > 1:
             return wx.MessageDialog(self, f'Error: Multiple footprints with anchor footprint reference "{self.m_anchorInput.Value}".').ShowModal()
         anchor, = anchor
+
+        pad0, *_ = anchor.Pads()
+        lset = pad0.GetLayerSet()
+        target_layer_id, *_ = [l for l in lset.CuStack() if lset.Contains(l)]
+
+        mesh_zones = []
+        for drawing in self.board.GetDrawings():
+            if drawing.GetLayer() == settings.mask_layer_id:
+                mesh_zones.append(drawing.GetPolyShape())
+
+        if not mesh_zones:
+                return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
+
+        keepouts = []
+        for zone in self.board.Zones():
+            if zone.GetDoNotAllowCopperPour() and zone.GetLayerSet().Contains(target_layer_id):
+                keepouts.append(zone.Outline())
+        print(f'Found {len(keepouts)} keepout areas.')
+
+        outlines = pcbnew.SHAPE_POLY_SET()
+        self.board.GetBoardPolygonOutlines(outlines)
+        board_outlines = list(self.poly_set_to_shapely(outlines))
+        board_mask = shapely.ops.unary_union(board_outlines)
+        board_mask = board_mask.buffer(-settings.edge_clearance)
+
+        zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone) ]
+        zone_mask = shapely.ops.unary_union(zone_outlines)
+        mask = zone_mask.intersection(board_mask)
+
+        keepout_outlines = [ outline for zone in keepouts for outline in self.poly_set_to_shapely(zone) ]
+        keepout_mask = shapely.ops.unary_union(keepout_outlines)
+        mask = shapely.difference(mask, keepout_mask)
 
         try:
             def warn(msg):
@@ -232,8 +204,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 if self.tearup_confirm_dialog.ShowModal() == wx.ID_YES:
                     raise AbortError()
 
-            nets = list(islice(self.net_names(), settings.num_traces))
-            self.generate_mesh_backend(mask, anchor, nets=nets, warn=warn, settings=settings)
+            self.generate_mesh_backend(mask, anchor, net_prefix=str(self.m_net_prefix.Value), target_layer_id=target_layer_id, warn=warn, settings=settings)
 
         except GeneratorError as e:
             return wx.MessageDialog(self, str(e), "Mesh Generation Error").ShowModal()
@@ -255,60 +226,67 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             interiors = [ shape_line_chain_to_coords(poly_set.Hole(i, j)) for j in range(poly_set.HoleCount(i)) ]
             yield polygon.Polygon(exterior, interiors)
 
-    def generate_mesh_backend(self, mask, anchor, nets, warn=lambda s: None, settings=GeneratorSettings()):
-        anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingPoly()))
+    def generate_mesh_backend(self, mask, anchor, net_prefix, target_layer_id, warn=lambda s: None, settings=GeneratorSettings()):
+        anchor_outlines = list(self.poly_set_to_shapely(anchor.GetBoundingHull()))
         if len(anchor_outlines) == 0:
             raise GeneratorError('Could not find any outlines for anchor {}'.format(anchor.GetReference()))
         if len(anchor_outlines) > 1:
             warn('Anchor {} has multiple outlines. Using first outline for trace start.')
+        anchor_pads = list(sorted(anchor.Pads(), key=lambda pad: int(pad.GetNumber())))
 
-        width_per_trace = settings.trace_width + settings.space_width
-        grid_cell_width = width_per_trace * settings.num_traces * 2
+        mesh_angle = anchor.GetOrientationDegrees()
+        trace_width = pcbnew.ToMM(anchor_pads[0].GetSize()[0])
+        space_width = pcbnew.ToMM(math.dist(anchor_pads[0].GetPosition(), anchor_pads[1].GetPosition())) - trace_width
+        num_traces = len(anchor_pads)
+        assert num_traces%2 == 0
+        num_traces //= 2
+        nets = [f'{net_prefix}{i}' for i in range(num_traces)]
 
-        mask_rotated = affinity.rotate(mask, -settings.mesh_angle, origin=mask.centroid)
-        bbox = mask_rotated.bounds
+        width_per_trace = trace_width + space_width
+        grid_cell_width = width_per_trace * num_traces * 2
 
-        grid_origin = (bbox[0] + settings.offset_x - grid_cell_width, bbox[1] + settings.offset_y - grid_cell_width)
-        grid_rows = int((bbox[3] - grid_origin[1]) / grid_cell_width + 2)
-        grid_cols = int((bbox[2] - grid_origin[0]) / grid_cell_width + 2)
-        print(f'generating grid of size {grid_rows} * {grid_cols}')
+        x0, y0 = anchor_pads[0].GetPosition()
+        x0, y0 = pcbnew.ToMM(x0), pcbnew.ToMM(y0)
+        xl, yl = anchor_pads[-1].GetPosition()
+        xl, yl = pcbnew.ToMM(xl), pcbnew.ToMM(yl)
+
+        mesh_angle = math.atan2(xl-x0, yl-y0)
+        print('mesh angle is', math.degrees(mesh_angle))
+        len_along = - width_per_trace/2
+        x0 += -trace_width/2 * math.cos(mesh_angle) + len_along * math.sin(mesh_angle)
+        y0 += -trace_width/2 * math.sin(mesh_angle) + len_along * math.cos(mesh_angle)
+
+        mask_xformed = affinity.translate(mask, -x0, -y0)
+        mask_xformed = affinity.rotate(mask_xformed, -mesh_angle, origin=(0, 0), use_radians=True)
+        bbox = mask_xformed.bounds
+
+        grid_x0, grid_y0 = math.floor(bbox[0]/grid_cell_width), math.floor(bbox[1]/grid_cell_width)
+        grid_origin = grid_x0*grid_cell_width, grid_y0*grid_cell_width
+        grid_rows = int(math.ceil((bbox[3] - grid_origin[1]) / grid_cell_width))
+        grid_cols = int(math.ceil((bbox[2] - grid_origin[0]) / grid_cell_width))
+        print(f'generating grid of size {grid_rows} * {grid_cols} with origin {grid_x0}, {grid_y0}')
 
         grid = []
-        for y in range(grid_rows):
+        for y in range(grid_y0, grid_y0+grid_rows):
             row = []
-            for x in range(grid_cols):
+            for x in range(grid_x0, grid_x0+grid_cols):
                 cell = polygon.Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
                 cell = affinity.scale(cell, grid_cell_width, grid_cell_width, origin=(0, 0))
-                cell = affinity.translate(cell, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
-                cell = affinity.rotate(cell, settings.mesh_angle, origin=mask.centroid)
+                cell = affinity.translate(cell, x*grid_cell_width, y*grid_cell_width)
+                cell = affinity.rotate(cell, mesh_angle, origin=(0, 0))
+                cell = affinity.translate(cell, x0, y0)
                 row.append(cell)
             grid.append(row)
-
-        exit_line = affinity.rotate(geometry.LineString([(0,0), (0,-100000)]), settings.anchor_exit, origin=(0, 0))
-        exit_line = affinity.translate(exit_line, anchor_outlines[0].centroid.x, anchor_outlines[0].centroid.y)
-        possible_exits = []
-        for y, row in enumerate(grid):
-            for x, cell in enumerate(row):
-                if any(ol.overlaps(cell) for ol in anchor_outlines): # cell lies on outline
-                    if exit_line.crosses(cell): # cell lies on exit line
-                        possible_exits.append((cell, (x, y)))
-        if len(possible_exits) == 0:
-            raise GeneratorError('Cannot find an exit. This is a bug, please report.')
-        exit_cell = possible_exits[0] # might overlap multiple if not orthogonal
 
         num_valid = 0
         with DebugOutput('dbg_grid.svg') as dbg:
             dbg.add(mask, color='#00000020')
 
-            for y, row in enumerate(grid):
-                for x, cell in enumerate(row):
+            for y, row in enumerate(grid, start=grid_y0):
+                for x, cell in enumerate(row, start=grid_x0):
                     if mask.contains(cell):
-                        if cell == exit_cell[0]:
+                        if x == 0 and y == 0: # exit cell
                             color = '#ff00ff80'
-                        elif any(ol.overlaps(cell) for ol in anchor_outlines):
-                            color = '#ffff0080'
-                        elif any(ol.contains(cell) for ol in anchor_outlines):
-                            color = '#ff000080'
                         else:
                             num_valid += 1
                             color = '#00ff0080'
@@ -321,23 +299,21 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             for foo in anchor_outlines:
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
 
+            dbg.add([[(x0-2, y0), (x0+2, y0)], [(x0, y0-2), (x0, y0+2)]], color='none', stroke_width=0.05, stroke_color='#ff0000ff')
+
         def is_valid(cell):
             if not mask.contains(cell):
-                return False
-            if any(ol.overlaps(cell) for ol in anchor_outlines):
-                return False
-            if any(ol.contains(cell) for ol in anchor_outlines):
                 return False
             return True
 
         def iter_neighbors(x, y):
-            if x > 0:
+            if x > grid_x0:
                 yield x-1, y, 0b0100
-            if x < grid_cols:
+            if x - grid_x0 < grid_cols:
                 yield x+1, y, 0b0001
-            if y > 0:
+            if y > grid_y0:
                 yield x, y-1, 0b1000
-            if y < grid_rows:
+            if y - grid_y0 < grid_rows:
                 yield x, y+1, 0b0010
 
         def reciprocal(mask):
@@ -366,12 +342,12 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
                 if (x1, y1) == (x2, y2): # zero-length track due to zero chamfer
                     continue
-                track = pcbnew.TRACK(self.board)
-                track.SetStatus(track.GetStatus() | pcbnew.TRACK_AR)
-                track.SetStart(pcbnew.wxPoint(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
-                track.SetEnd(pcbnew.wxPoint(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
-                track.SetWidth(pcbnew.FromMM(settings.trace_width))
-                track.SetLayer(settings.target_layer_id)
+                track = pcbnew.PCB_TRACK(self.board)
+                #track.SetStatus(track.GetStatus() | pcbnew.TRACK_AR)
+                track.SetStart(pcbnew.VECTOR2I(pcbnew.FromMM(x1), pcbnew.FromMM(y1)))
+                track.SetEnd(pcbnew.VECTOR2I(pcbnew.FromMM(x2), pcbnew.FromMM(y2)))
+                track.SetWidth(pcbnew.FromMM(trace_width))
+                track.SetLayer(target_layer_id)
                 if net is not None:
                     track.SetNet(net)
                 self.board.Add(track)
@@ -382,7 +358,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             self.board.Add(ni)
             netinfos.append(ni)
 
-        not_visited = { (x, y) for x in range(grid_cols) for y in range(grid_rows) if is_valid(grid[y][x]) }
+        not_visited = { (x, y) for x in range(grid_x0, grid_x0+grid_cols) for y in range(grid_y0, grid_y0+grid_rows) if is_valid(grid[y-grid_y0][x-grid_x0]) }
         num_to_visit = len(not_visited)
         track_count = 0
         with DebugOutput('dbg_cells.svg') as dbg_cells,\
@@ -411,10 +387,10 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 0b1101: '#00ccffff',
                 0b1110: '#00ccffff',
                 0b1111: '#ffcc00ff'}
-            x, y = exit_cell[1]
+            x, y = -1, 0
             visited = 0
             key = 0
-            entry_dir = 0
+            entry_dir = 0b0001
             stack = []
             depth = 0
             max_depth = 0
@@ -446,17 +422,18 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                     for (le_x, le_y), (stroke_color, segments) in past_tiles.items():
                         for segment in segments:
                             segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
-                            segment = affinity.translate(segment, grid_origin[0] + le_x*grid_cell_width, grid_origin[1] + le_y*grid_cell_width)
-                            segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
-                            dbg_per_tile.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
+                            segment = affinity.translate(segment, le_x*grid_cell_width, le_y*grid_cell_width)
+                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0))
+                            segment = affinity.translate(segment, x0, y0)
+                            dbg_per_tile.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
 
             armed = False
             while not_visited or stack:
                 print(f'iteration {i}: {len(not_visited)}, {len(stack)}')
                 for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
                     if (n_x, n_y) in not_visited:
-                        dbg_composite.add(grid[n_y][n_x], color=('visit_depth', depth), opacity=1.0)
-                        dbg_cells.add(grid[n_y][n_x], color=('visit_depth', depth), opacity=1.0)
+                        dbg_composite.add(grid[n_y-grid_y0][n_x-grid_x0], color=('visit_depth', depth), opacity=1.0)
+                        dbg_cells.add(grid[n_y-grid_y0][n_x-grid_x0], color=('visit_depth', depth), opacity=1.0)
                         key |= bmask
                         stack.append((x, y, key, bmask, depth))
                         not_visited.remove((n_x, n_y))
@@ -468,7 +445,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
                         past_tiles[x, y] = (TILE_COLORS[key],
                                 [segment
-                                    for segment, _net in Pattern.render(key, settings.num_traces, settings.chamfer) ])
+                                    for segment, _net in Pattern.render(key, num_traces, settings.chamfer) ])
 
                         x, y, key, entry_dir = n_x, n_y, reciprocal(bmask), bmask
                         #dump_output(i)
@@ -476,15 +453,15 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 else:
                     stroke_color = TILE_COLORS[key]
                     past_tiles[x, y] = (stroke_color,
-                            [segment
-                                for segment, _net in Pattern.render(key, settings.num_traces, settings.chamfer) ])
-                    for segment, net in Pattern.render(key, settings.num_traces, settings.chamfer):
+                            [segment for segment, _net in Pattern.render(key, num_traces, settings.chamfer) ])
+                    for segment, net in Pattern.render(key, num_traces, settings.chamfer):
                         segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
-                        segment = affinity.translate(segment, grid_origin[0] + x*grid_cell_width, grid_origin[1] + y*grid_cell_width)
-                        segment = affinity.rotate(segment, settings.mesh_angle, origin=mask.centroid)
-                        dbg_composite.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#ffffff60')
-                        dbg_traces.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color='#000000ff')
-                        dbg_tiles.add(segment, stroke_width=settings.trace_width, color='#ff000000', stroke_color=stroke_color)
+                        segment = affinity.translate(segment, x*grid_cell_width, y*grid_cell_width)
+                        segment = affinity.rotate(segment, mesh_angle, origin=(0, 0))
+                        segment = affinity.translate(segment, x0, y0)
+                        dbg_composite.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#ffffff60')
+                        dbg_traces.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#000000ff')
+                        dbg_tiles.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
                         add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
                         track_count += 1
                     if not stack:
@@ -512,7 +489,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         # TODO generate
 
     def update_net_label(self, evt):
-        self.m_netLabel.SetLabel('Like: ' + ', '.join(islice(self.net_names(), 3)) + ', ...')
+        self.m_netLabel.SetLabel('Like: ' + ', '.join(f'{self.m_net_prefix.Value}{i}' for i in range(3)) + ', ...')
 
     def quit(self, evt):
         self.Destroy()
@@ -633,7 +610,7 @@ class DebugOutputWrapper:
         if isinstance(obj, geometry.MultiPolygon):
             out = ''
             for geom in obj.geoms:
-                out += gen_svg(geom, fill_color, stroke_color, stroke_width, opacity)
+                out += self.gen_svg(geom, fill_color, stroke_color, stroke_width, opacity)
             return out
 
         elif isinstance(obj, polygon.Polygon):
@@ -649,6 +626,13 @@ class DebugOutputWrapper:
             path = " ".join([
                 "M {0} L {1}".format(coords[0], " L ".join(coords[1:]))
                 for coords in all_coords])
+
+        elif isinstance(obj, list):
+            all_coords = [ [f'{x},{y}' for x, y in seg] for seg in obj ]
+            path = " ".join([
+                "M {0} L {1}".format(coords[0], " L ".join(coords[1:]))
+                for coords in all_coords])
+
         else:
             raise ValueError(f'Unhandled shapely object type {type(obj)}')
 
@@ -659,7 +643,7 @@ class DebugOutputWrapper:
         #specify margin in coordinate units
         margin = 5
 
-        bboxes = [ list(obj.bounds) for obj, _style in self.objs ]
+        bboxes = [ list(obj.bounds) for obj, _style in self.objs if not isinstance(obj, list) ]
         min_x = min( bbox[0] for bbox in bboxes ) - margin
         min_y = min( bbox[1] for bbox in bboxes ) - margin
         max_x = max( bbox[2] for bbox in bboxes ) + margin
