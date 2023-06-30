@@ -273,7 +273,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 cell = polygon.Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
                 cell = affinity.scale(cell, grid_cell_width, grid_cell_width, origin=(0, 0))
                 cell = affinity.translate(cell, x*grid_cell_width, y*grid_cell_width)
-                cell = affinity.rotate(cell, mesh_angle, origin=(0, 0))
+                cell = affinity.rotate(cell, mesh_angle, origin=(0, 0), use_radians=True)
                 cell = affinity.translate(cell, x0, y0)
                 row.append(cell)
             grid.append(row)
@@ -423,13 +423,12 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         for segment in segments:
                             segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                             segment = affinity.translate(segment, le_x*grid_cell_width, le_y*grid_cell_width)
-                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0))
+                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0), use_radians=True)
                             segment = affinity.translate(segment, x0, y0)
                             dbg_per_tile.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
 
             armed = False
             while not_visited or stack:
-                print(f'iteration {i}: {len(not_visited)}, {len(stack)}')
                 for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
                     if (n_x, n_y) in not_visited:
                         dbg_composite.add(grid[n_y-grid_y0][n_x-grid_x0], color=('visit_depth', depth), opacity=1.0)
@@ -455,15 +454,16 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                     past_tiles[x, y] = (stroke_color,
                             [segment for segment, _net in Pattern.render(key, num_traces, settings.chamfer) ])
                     for segment, net in Pattern.render(key, num_traces, settings.chamfer):
-                        segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
-                        segment = affinity.translate(segment, x*grid_cell_width, y*grid_cell_width)
-                        segment = affinity.rotate(segment, mesh_angle, origin=(0, 0))
-                        segment = affinity.translate(segment, x0, y0)
-                        dbg_composite.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#ffffff60')
-                        dbg_traces.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#000000ff')
-                        dbg_tiles.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
-                        add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
-                        track_count += 1
+                        if is_valid(grid[y-grid_y0][x-grid_x0]):
+                            segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
+                            segment = affinity.translate(segment, x*grid_cell_width, y*grid_cell_width)
+                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0), use_radians=True)
+                            segment = affinity.translate(segment, x0, y0)
+                            dbg_composite.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#ffffff60')
+                            dbg_traces.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#000000ff')
+                            dbg_tiles.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
+                            add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
+                            track_count += 1
                     if not stack:
                         break
                     if armed:
