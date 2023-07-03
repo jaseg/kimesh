@@ -125,8 +125,12 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
     def tearup_mesh(self, matching=None):
         count = 0
+        anchor, target_layer_id = self.get_anchor()
         for track in self.board.GetTracks():
             if matching is not None and track.GetNet().GetNetname() not in matching:
+                continue
+
+            if track.GetLayer() != target_layer_id:
                 continue
 
             count += 1
@@ -135,6 +139,21 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
     def settings_fn(self):
         return path.join(path.dirname(self.board.GetFileName()), 'last_kimesh_settings.json')
+
+    def get_anchor(self):
+        ref = str(list(self.board.Footprints())[self.m_anchorChoice.GetSelection()].GetReference())
+        footprints = [ fp for fp in self.board.Footprints() if fp.GetReference() == ref ]
+        if len(footprints) == 0:
+            wx.MessageDialog(self, f'Error: Could not find anchor footprint "{ref}".').ShowModal()
+            raise ValueError()
+        if len(footprints) > 1:
+            wx.MessageDialog(self, f'Error: Multiple footprints with anchor footprint reference "{ref}".').ShowModal()
+            raise ValueError()
+        anchor = footprints[0]
+        pad0, *_ = anchor.Pads()
+        lset = pad0.GetLayerSet()
+        target_layer_id, *_ = [l for l in lset.CuStack() if lset.Contains(l)]
+        return anchor, target_layer_id
 
     def generate_mesh(self, evt):
         try:
@@ -155,16 +174,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         except:
             wx.MessageDialog(self, "Cannot save settings: {}.".format(e), "File I/O error").ShowModal()
 
-        anchor = [ fp for fp in self.board.Footprints() if fp.GetReference() == settings.anchor ]
-        if len(anchor) == 0:
-            return wx.MessageDialog(self, f'Error: Could not find anchor footprint "{self.m_anchorInput.Value}".').ShowModal()
-        if len(anchor) > 1:
-            return wx.MessageDialog(self, f'Error: Multiple footprints with anchor footprint reference "{self.m_anchorInput.Value}".').ShowModal()
-        anchor, = anchor
 
-        pad0, *_ = anchor.Pads()
-        lset = pad0.GetLayerSet()
-        target_layer_id, *_ = [l for l in lset.CuStack() if lset.Contains(l)]
+        anchor, target_layer_id = self.get_anchor()
 
         mesh_zones = []
         for drawing in self.board.GetDrawings():
