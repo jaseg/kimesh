@@ -6,6 +6,7 @@ import random
 import math
 from itertools import count, islice
 import json
+import re
 from os import path
 
 import wx
@@ -85,7 +86,13 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             if name == 'User.Eco1':
                 self.m_maskLayerChoice.SetSelection(i)
 
-        for i, fp in enumerate(self.board.Footprints()):
+        def sort_key(fp):
+            ref = fp.GetReference()
+            parts = re.findall(r'[0-9]+|[^0-9]+', ref)
+            return tuple(int(part) if part.isnumeric() else part for part in parts)
+
+        self.fps = sorted(self.board.Footprints(), key=sort_key)
+        for i, fp in enumerate(self.fps):
             ref = fp.GetReference()
             self.m_anchorChoice.Append(ref)
             if settings and ref == settings.anchor:
@@ -141,7 +148,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         return path.join(path.dirname(self.board.GetFileName()), 'last_kimesh_settings.json')
 
     def get_anchor(self):
-        ref = str(list(self.board.Footprints())[self.m_anchorChoice.GetSelection()].GetReference())
+        ref = str(self.fps[self.m_anchorChoice.GetSelection()].GetReference())
         footprints = [ fp for fp in self.board.Footprints() if fp.GetReference() == ref ]
         if len(footprints) == 0:
             wx.MessageDialog(self, f'Error: Could not find anchor footprint "{ref}".').ShowModal()
