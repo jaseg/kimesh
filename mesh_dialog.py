@@ -252,18 +252,17 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             warn('Anchor {} has multiple outlines. Using first outline for trace start.')
         anchor_pads = list(sorted(anchor.Pads(), key=lambda pad: int(pad.GetNumber())))
 
-        mesh_angle = anchor.GetOrientationDegrees()
         trace_width = pcbnew.ToMM(anchor_pads[0].GetSize()[0])
         space_width = pcbnew.ToMM(math.dist(anchor_pads[0].GetPosition(), anchor_pads[1].GetPosition())) - trace_width
         num_traces = len(anchor_pads)
-        assert num_traces%2 == 0
-        num_traces //= 2
+        assert num_traces%4 == 0
+        num_traces //= 4
         nets = [f'{net_prefix}{i}' for i in range(num_traces)]
 
         width_per_trace = trace_width + space_width
         grid_cell_width = width_per_trace * num_traces * 2
 
-        x0, y0 = anchor_pads[0].GetPosition()
+        x0, y0 = anchor_pads[len(anchor_pads)//2].GetPosition()
         x0, y0 = pcbnew.ToMM(x0), pcbnew.ToMM(y0)
         xl, yl = anchor_pads[-1].GetPosition()
         xl, yl = pcbnew.ToMM(xl), pcbnew.ToMM(yl)
@@ -271,8 +270,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         mesh_angle = math.atan2(xl-x0, yl-y0)
         print('mesh angle is', math.degrees(mesh_angle))
         len_along = - width_per_trace/2
-        x0 += -trace_width/2 * math.cos(mesh_angle) + len_along * math.sin(mesh_angle)
-        y0 += -trace_width/2 * math.sin(mesh_angle) + len_along * math.cos(mesh_angle)
+        x0 += len_along * math.sin(mesh_angle)
+        y0 += len_along * math.cos(mesh_angle)
 
         mask_xformed = affinity.translate(mask, -x0, -y0)
         mask_xformed = affinity.rotate(mask_xformed, -mesh_angle, origin=(0, 0), use_radians=True)
