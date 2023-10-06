@@ -44,6 +44,25 @@ def generate_footprints(output_dir, trace_width, clearance, conductors):
                     layer='F.Cu',
                     fill=footprints.Atom.solid)
                           for i in range(2*conductors)],
+                lines=[footprints.Line(footprints.XYCoord(pitch/2 + trace/2 + 0.25 + x1, y1),
+                                       footprints.XYCoord(pitch/2 + trace/2 + 0.25 + x2, y2),
+                                       'F.Fab',
+                                       stroke=footprints.Stroke(width=0.25))
+                       for x1, y1, x2, y2 in [
+                           (0, pitch * (conductors - 0.5) + trace/2 - 0.25/2,
+                            0, pitch * (-conductors + 0.5) - trace/2 + 0.25/2),
+                           (0, 0, conductors * pitch, 0),
+                           (conductors * pitch, 0, conductors * pitch/2, conductors * pitch/2),
+                           (conductors * pitch, 0, conductors * pitch/2, -conductors * pitch/2),
+                           ]],
+                texts=[
+                    footprints.Text(
+                        text='Mesh',
+                        at=footprints.AtPos(pitch/2 + trace/2 + 0.25 + conductors * pitch + 0.5, 0),
+                        layer='F.Fab',
+                        effects=footprints.TextEffect(justify=footprints.Justify(h=footprints.Atom.left))
+                        )
+                    ],
                 pads=[
                     footprints.Pad(
                         number=f'{i+1}',
