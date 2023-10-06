@@ -61,4 +61,4 @@ Theory of operation
 
 I have published a post_ on my blog on the theory of operation behind KiMesh.
 
-.. _post: https://blog.jaseg.de/posts/kicad-mesh-plugin/
+.. _post: https://jaseg.de/blog/kicad-mesh-plugin/
