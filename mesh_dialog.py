@@ -39,7 +39,7 @@ class GeneratorSettings:
 
     def serialize(self):
         d = dataclasses.asdict(self)
-        d['kimesh_settings_version'] = '1.0.0'
+        d['kimesh_settings_version'] = '2.0.0'
         return json.dumps(d).encode()
 
     @classmethod
@@ -77,8 +77,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             with open(self.settings_fn(), 'rb') as f:
                 try:
                     settings = GeneratorSettings.deserialize(f.read())
-                except GeneratorSettings.VersionError as e:
-                    wx.MessageDialog(self, "Cannot load settings: {}.".format(e), "File I/O error").ShowModal()
+                except (GeneratorSettings.VersionError, TypeError) as e:
+                    wx.MessageDialog(self, "Cannot load settings: {}.".format(e), "File I/O error. Will use default settings.").ShowModal()
 
         for i in range(pcbnew.PCB_LAYER_ID_COUNT):
             name = board.GetLayerName(i)
