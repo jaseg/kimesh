@@ -190,7 +190,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 mesh_zones.append(drawing.GetPolyShape())
 
         if not mesh_zones:
-                return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
+            return wx.MessageDialog(self, "Error: Could not find any mesh zones on the outline pattern layer.").ShowModal()
 
         keepouts = []
         for zone in self.board.Zones():
@@ -203,14 +203,24 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         board_outlines = list(self.poly_set_to_shapely(outlines))
         board_mask = shapely.ops.unary_union(board_outlines)
         board_mask = board_mask.buffer(-settings.edge_clearance)
+        print('board outline bounds:', board_mask.bounds)
+        if board_mask.is_empty:
+            return wx.MessageDialog(self, "Error: Could not find the board outline, or board edge clearance is set too high.").ShowModal()
 
         zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone) ]
         zone_mask = shapely.ops.unary_union(zone_outlines)
-        mask = zone_mask.intersection(board_mask)
+        if zone_mask.is_empty:
+            mask = board_mask
+        else:
+            mask = zone_mask.intersection(board_mask)
+        print('Mesh mask bounds:', zone_mask.bounds)
 
         keepout_outlines = [ outline for zone in keepouts for outline in self.poly_set_to_shapely(zone) ]
         keepout_mask = shapely.ops.unary_union(keepout_outlines)
-        mask = shapely.difference(mask, keepout_mask)
+        if not keepout_mask.is_empty:
+            mask = shapely.difference(mask, keepout_mask)
+        print('keepout mask bounds:', keepout_mask.bounds)
+        print('resulting mask bounds:', mask.bounds)
 
         try:
             def warn(msg):
@@ -261,6 +271,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         width_per_trace = trace_width + space_width
         grid_cell_width = width_per_trace * num_traces * 2
+        print(f'mesh cell size is {grid_cell_width}')
 
         x0, y0 = anchor_pads[len(anchor_pads)//2].GetPosition()
         x0, y0 = pcbnew.ToMM(x0), pcbnew.ToMM(y0)
@@ -598,7 +609,6 @@ def virihex(val, max=1.0, alpha=1.0):
 
 @contextmanager
 def DebugOutput(filename):
-    filename = path.join('/tmp', filename)
     with open(filename, 'w') as f:
         wrapper = DebugOutputWrapper(f)
         yield wrapper
@@ -680,15 +690,16 @@ class DebugOutputWrapper:
             'xmlns:xlink': 'http://www.w3.org/1999/xlink'
         }
 
-        self.f.write(textwrap.dedent(r'''
-            <?xml version="1.0" encoding="utf-8" ?>
-            <svg {attrs:s}>
-            {data}
-            </svg>
-        ''').format(
-            attrs = ' '.join(['{key:s}="{val:s}"'.format(key = key, val = props[key]) for key in props]),
-            data = '\n'.join(self.gen_svg(obj, *style) for obj, style in self.objs)
-        ).strip())
+        if self.f is not None:
+            self.f.write(textwrap.dedent(r'''
+                <?xml version="1.0" encoding="utf-8" ?>
+                <svg {attrs:s}>
+                {data}
+                </svg>
+            ''').format(
+                attrs = ' '.join(['{key:s}="{val:s}"'.format(key = key, val = props[key]) for key in props]),
+                data = '\n'.join(self.gen_svg(obj, *style) for obj, style in self.objs)
+            ).strip())
 
 def show_dialog(board):
     dialog = MeshPluginMainDialog(board)
