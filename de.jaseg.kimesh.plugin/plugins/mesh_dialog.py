@@ -101,8 +101,9 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         for i, fp in enumerate(self.fps):
             ref = fp.GetReference()
             self.m_anchorChoice.Append(ref)
-            if settings and ref == settings.anchor:
+            if (settings and ref == settings.anchor) or (not settings and ':MeshAnchor' in fp.GetFPID()):
                 self.m_anchorChoice.SetSelection(i)
+
 
         if settings:
             self.m_chamferSpin.Value = settings.chamfer*100.0
@@ -358,7 +359,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         y0 += len_along * math.cos(mesh_angle)
 
         mask_xformed = affinity.translate(mask, -x0, -y0)
-        mask_xformed = affinity.rotate(mask_xformed, -mesh_angle, origin=(0, 0), use_radians=True)
+        mask_xformed = affinity.rotate(mask_xformed, mesh_angle, origin=(0, 0), use_radians=True)
         bbox = mask_xformed.bounds
 
         grid_x0, grid_y0 = math.floor(bbox[0]/grid_cell_width), math.floor(bbox[1]/grid_cell_width)
@@ -374,7 +375,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 cell = polygon.Polygon([(0, 0), (0, 1), (1, 1), (1, 0)])
                 cell = affinity.scale(cell, grid_cell_width, grid_cell_width, origin=(0, 0))
                 cell = affinity.translate(cell, x*grid_cell_width, y*grid_cell_width)
-                cell = affinity.rotate(cell, mesh_angle, origin=(0, 0), use_radians=True)
+                cell = affinity.rotate(cell, -mesh_angle, origin=(0, 0), use_radians=True)
                 cell = affinity.translate(cell, x0, y0)
                 row.append(cell)
             grid.append(row)
@@ -386,7 +387,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             for y, row in enumerate(grid, start=grid_y0):
                 for x, cell in enumerate(row, start=grid_x0):
                     if mask.contains(cell):
-                        if x == 0 and y == 0: # exit cell
+                        if x == -1 and y == 0: # exit cell
                             color = '#ff00ff80'
                         else:
                             num_valid += 1
@@ -460,6 +461,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             netinfos.append(ni)
 
         not_visited = { (x, y) for x in range(grid_x0, grid_x0+grid_cols) for y in range(grid_y0, grid_y0+grid_rows) if is_valid(grid[y-grid_y0][x-grid_x0]) }
+        not_visited -= {(-1, 0)} # Remove exit cell
         num_to_visit = len(not_visited)
         track_count = 0
         with self.viz('mesh_cells.svg') as dbg_cells,\
@@ -524,7 +526,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         for segment in segments:
                             segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                             segment = affinity.translate(segment, le_x*grid_cell_width, le_y*grid_cell_width)
-                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0), use_radians=True)
+                            segment = affinity.rotate(segment, -mesh_angle, origin=(0, 0), use_radians=True)
                             segment = affinity.translate(segment, x0, y0)
                             dbg_per_tile.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
 
@@ -558,7 +560,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                         if is_valid(grid[y-grid_y0][x-grid_x0]):
                             segment = affinity.scale(segment, grid_cell_width, grid_cell_width, origin=(0, 0))
                             segment = affinity.translate(segment, x*grid_cell_width, y*grid_cell_width)
-                            segment = affinity.rotate(segment, mesh_angle, origin=(0, 0), use_radians=True)
+                            segment = affinity.rotate(segment, -mesh_angle, origin=(0, 0), use_radians=True)
                             segment = affinity.translate(segment, x0, y0)
                             dbg_composite.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#ffffff60')
                             dbg_traces.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#000000ff')
