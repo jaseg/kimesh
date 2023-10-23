@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ###########################################################################
-## Python code generated with wxFormBuilder (version 3.10.1-367-gf0e67a69)
+## Python code generated with wxFormBuilder (version 3.10.1-380-gf48f2659)
 ## http://www.wxformbuilder.org/
 ##
 ## PLEASE DO *NOT* EDIT THIS FILE!
@@ -17,11 +17,17 @@ import wx.xrc
 class MainDialog ( wx.Dialog ):
 
 	def __init__( self, parent ):
-		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 632,458 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
+		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 632,580 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
 
 		self.SetSizeHints( wx.DefaultSize, wx.DefaultSize )
 
 		bSizer1 = wx.BoxSizer( wx.VERTICAL )
+
+		self.m_warningLabel = wx.StaticText( self, wx.ID_ANY, u"<font color=\"red\"><b>Warning: Board outline not found</b></font>", wx.DefaultPosition, wx.DefaultSize, wx.ALIGN_CENTER_HORIZONTAL )
+		self.m_warningLabel.SetLabelMarkup( u"<font color=\"red\"><b>Warning: Board outline not found</b></font>" )
+		self.m_warningLabel.Wrap( -1 )
+
+		bSizer1.Add( self.m_warningLabel, 0, wx.ALL|wx.EXPAND, 5 )
 
 		fgSizer1 = wx.FlexGridSizer( 0, 2, 0, 0 )
 		fgSizer1.AddGrowableCol( 1 )
@@ -136,6 +142,35 @@ class MainDialog ( wx.Dialog ):
 
 
 		fgSizer1.Add( bSizer12, 1, wx.EXPAND, 5 )
+
+
+		fgSizer1.Add( ( 0, 0), 1, wx.EXPAND, 5 )
+
+		self.m_useKeepoutCheckbox = wx.CheckBox( self, wx.ID_ANY, u"Respect zone keepouts", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_useKeepoutCheckbox.SetValue(True)
+		fgSizer1.Add( self.m_useKeepoutCheckbox, 0, wx.ALL, 5 )
+
+
+		fgSizer1.Add( ( 0, 0), 1, wx.EXPAND, 5 )
+
+		self.m_useOutlineCheckbox = wx.CheckBox( self, wx.ID_ANY, u"Respect board outline", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_useOutlineCheckbox.SetValue(True)
+		fgSizer1.Add( self.m_useOutlineCheckbox, 0, wx.ALL, 5 )
+
+
+		fgSizer1.Add( ( 0, 0), 1, wx.EXPAND, 5 )
+
+		self.m_vizCheckbox = wx.CheckBox( self, wx.ID_ANY, u"Save layout visualizations", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_vizCheckbox.SetValue(True)
+		fgSizer1.Add( self.m_vizCheckbox, 0, wx.ALL, 5 )
+
+		self.m_staticText14 = wx.StaticText( self, wx.ID_ANY, u"Visualization output directory", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText14.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText14, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		self.m_vizTextfield = wx.TextCtrl( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, 0 )
+		fgSizer1.Add( self.m_vizTextfield, 0, wx.ALL|wx.EXPAND, 5 )
 
 
 		bSizer1.Add( fgSizer1, 1, wx.EXPAND, 5 )

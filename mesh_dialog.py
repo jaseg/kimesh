@@ -8,6 +8,7 @@ from itertools import count, islice
 import json
 import re
 from os import path
+import os
 
 import wx
 
@@ -30,16 +31,20 @@ class AbortError(SystemError):
 
 @dataclasses.dataclass
 class GeneratorSettings:
-    edge_clearance: float = 1.5   # mm
-    anchor:         str   = None  # Footprint designator
-    chamfer:        float = 0.0   # unit fraction
-    mask_layer_id:  int   = 0     # kicad layer id, populated later
-    random_seed:    str   = None
-    randomness:     float = 1.0
+    edge_clearance:     float = 1.5   # mm
+    anchor:             str   = None  # Footprint designator
+    chamfer:            float = 0.0   # unit fraction
+    mask_layer_id:      int   = 0     # kicad layer id, populated later
+    random_seed:        str   = None
+    randomness:         float = 1.0
+    use_keepouts:       bool  = True
+    use_outline:        bool  = True
+    save_visualization: bool  = True
+    visualization_path: str   = 'mesh_visualizations'
 
     def serialize(self):
         d = dataclasses.asdict(self)
-        d['kimesh_settings_version'] = '2.0.0'
+        d['kimesh_settings_version'] = '2.1.0'
         return json.dumps(d).encode()
 
     @classmethod
@@ -47,7 +52,7 @@ class GeneratorSettings:
         d = json.loads(data.decode())
         version = d.pop('kimesh_settings_version')
         vtup = tuple(map(int, version.split('.')))
-        if vtup > (2, 0, 0):
+        if vtup > (2, 1, 0):
             raise cls.VersionError("Project kimesh settings file is too new for this plugin's version.")
         return cls(**d)
 
@@ -69,6 +74,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         self.nets = { str(wxs) for wxs, netinfo in board.GetNetsByName().items() }
         self.update_net_label(None)
+        self.update_outline_warning()
 
         self.Fit()
 
@@ -104,8 +110,63 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             self.m_seedInput.Value = settings.random_seed or ''
             self.m_randomnessSpin.Value = settings.randomness*100.0
             self.m_edgeClearanceSpin.Value = settings.edge_clearance
+            self.m_useOutlineCheckbox.Value = settings.use_outline
+            self.m_useKeepoutCheckbox.Value = settings.use_keepouts
+            self.m_vizTextfield.Value = settings.visualization_path
+            self.m_vizCheckbox.Value = settings.save_visualization
 
         self.SetMinSize(self.GetSize())
+
+    @contextmanager
+    def viz(self, filename):
+        if self.m_vizCheckbox.Value:
+            val = self.m_vizTextfield.Value
+            project_dir = path.dirname(self.board.GetFileName())
+            if val:
+                val = path.join(project_dir, val)
+                if not os.path.isdir(val):
+                    os.mkdir(val)
+                filename = path.join(val, filename)
+
+            filename = path.join(project_dir, filename)
+            with open(filename, 'w') as f:
+                wrapper = DebugOutputWrapper(f)
+                yield wrapper
+                wrapper.save()
+        
+        else:
+            wrapper = DebugOutputWrapper(None)
+            yield wrapper
+
+    def board_has_outline(self):
+        # KiCad's API is absolutely insane. As long as the board has an outline, the board outline function works
+        # alright. Now imagine the Edge.Cuts layer is empty. What would be a sane thing to do? I guess raising an error
+        # would be the best, with the second best being to return something like the hull of all objects on the other
+        # layers. Alas, KiCad doesn't do either. Instead, KiCad returns the union of the shapes of all objects on the
+        # **VISIBLE** layers, so the result of that outline function changes with which layers the user has set to
+        # visible. Whyyyyy :(
+        # 
+        # We have to work around this to avoid presenting the user with a foot-gun in case they hide their mesh
+        # definition layer.
+        #
+        edge_cuts = self.board.GetLayerID('Edge.Cuts')
+        outline_objs = []
+        for drawing in self.board.GetDrawings():
+            if drawing.GetLayer() == edge_cuts:
+                return True
+        else:
+            return False
+
+    def update_outline_warning(self):
+        outlines = pcbnew.SHAPE_POLY_SET()
+        self.board.GetBoardPolygonOutlines(outlines)
+        board_outlines = list(self.poly_set_to_shapely(outlines))
+        board_mask = shapely.ops.unary_union(board_outlines)
+
+        if not self.board_has_outline() or board_mask.is_empty:
+            self.m_warningLabel.SetLabelMarkup('<b>Warning: Board outline not found</b>')
+        else:
+            self.m_warningLabel.SetLabelMarkup('')
 
     def get_matching_nets(self):
         prefix = self.m_net_prefix.Value
@@ -170,7 +231,11 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 chamfer     = float(self.m_chamferSpin.Value)/100.0,
                 mask_layer_id   = self.m_maskLayerChoice.GetSelection(),
                 random_seed = str(self.m_seedInput.Value) or None,
-                randomness  = float(self.m_randomnessSpin.Value)/100.0)
+                randomness  = float(self.m_randomnessSpin.Value)/100.0,
+                use_outline = self.m_useOutlineCheckbox.Value,
+                use_keepouts = self.m_useKeepoutCheckbox.Value,
+                visualization_path = self.m_vizTextfield.Value,
+                save_visualization = self.m_vizCheckbox.Value)
         except ValueError as e:
             return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
 
@@ -198,29 +263,37 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 keepouts.append(zone.Outline())
         print(f'Found {len(keepouts)} keepout areas.')
 
-        outlines = pcbnew.SHAPE_POLY_SET()
-        self.board.GetBoardPolygonOutlines(outlines)
-        board_outlines = list(self.poly_set_to_shapely(outlines))
-        board_mask = shapely.ops.unary_union(board_outlines)
-        board_mask = board_mask.buffer(-settings.edge_clearance)
-        print('board outline bounds:', board_mask.bounds)
-        if board_mask.is_empty:
-            return wx.MessageDialog(self, "Error: Could not find the board outline, or board edge clearance is set too high.").ShowModal()
+        if self.board_has_outline() and self.m_useOutlineCheckbox.Value: # Avoid foot-gun due to insane API. See note in the function.
+            outlines = pcbnew.SHAPE_POLY_SET()
+            self.board.GetBoardPolygonOutlines(outlines)
+            board_outlines = list(self.poly_set_to_shapely(outlines))
+            board_mask = shapely.ops.unary_union(board_outlines)
+            mask = board_mask.buffer(-settings.edge_clearance)
+            print('board outline bounds:', mask.bounds)
+            if mask.is_empty:
+                return wx.MessageDialog(self, "Error: Board edge clearance is set too high. There is nothing left for the mesh after applying clearance.").ShowModal()
+        else:
+            mask = None
 
         zone_outlines = [ outline for zone in mesh_zones for outline in self.poly_set_to_shapely(zone) ]
         zone_mask = shapely.ops.unary_union(zone_outlines)
         if zone_mask.is_empty:
-            mask = board_mask
+            return wx.MessageDialog(self, "Error: Empty mesh outline on mesh outline layer. Make sure the mesh outline is defined with polygon objects only. Other shapes are not supported yet.").ShowModal()
+        elif mask is None:
+            mask = zone_mask
         else:
-            mask = zone_mask.intersection(board_mask)
+            mask = zone_mask.intersection(mask)
         print('Mesh mask bounds:', zone_mask.bounds)
 
-        keepout_outlines = [ outline for zone in keepouts for outline in self.poly_set_to_shapely(zone) ]
-        keepout_mask = shapely.ops.unary_union(keepout_outlines)
-        if not keepout_mask.is_empty:
-            mask = shapely.difference(mask, keepout_mask)
-        print('keepout mask bounds:', keepout_mask.bounds)
-        print('resulting mask bounds:', mask.bounds)
+        if self.m_useKeepoutCheckbox.Value:
+            keepout_outlines = [ outline for zone in keepouts for outline in self.poly_set_to_shapely(zone) ]
+            keepout_mask = shapely.ops.unary_union(keepout_outlines)
+            if not keepout_mask.is_empty:
+                mask = shapely.difference(mask, keepout_mask)
+            print('keepout mask bounds:', keepout_mask.bounds)
+            print('resulting mask bounds:', mask.bounds)
+        if mask.is_empty:
+            return wx.MessageDialog(self, "Error: After applying all keepouts, and intersecting with the board's outline, the mesh outline is empty.")
 
         try:
             def warn(msg):
@@ -307,7 +380,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             grid.append(row)
 
         num_valid = 0
-        with DebugOutput('dbg_grid.svg') as dbg:
+        with self.viz('mesh_grid.svg') as dbg:
             dbg.add(mask, color='#00000020')
 
             for y, row in enumerate(grid, start=grid_y0):
@@ -389,10 +462,10 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         not_visited = { (x, y) for x in range(grid_x0, grid_x0+grid_cols) for y in range(grid_y0, grid_y0+grid_rows) if is_valid(grid[y-grid_y0][x-grid_x0]) }
         num_to_visit = len(not_visited)
         track_count = 0
-        with DebugOutput('dbg_cells.svg') as dbg_cells,\
-             DebugOutput('dbg_composite.svg') as dbg_composite,\
-             DebugOutput('dbg_tiles.svg') as dbg_tiles,\
-             DebugOutput('dbg_traces.svg') as dbg_traces:
+        with self.viz('mesh_cells.svg') as dbg_cells,\
+             self.viz('mesh_composite.svg') as dbg_composite,\
+             self.viz('mesh_tiles.svg') as dbg_tiles,\
+             self.viz('mesh_traces.svg') as dbg_traces:
             dbg_cells.add(mask, color='#00000020')
             dbg_composite.add(mask, color='#00000020')
             dbg_traces.add(mask, color='#00000020')
@@ -425,7 +498,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             i = 0
             past_tiles = {}
             def dump_output(i):
-                with DebugOutput(f'per-tile/step{i}.svg') as dbg_per_tile:
+                with self.viz(f'per-tile/step{i}.svg') as dbg_per_tile:
                     dbg_per_tile.add(mask, color='#00000020')
                     for foo in anchor_outlines:
                         dbg_per_tile.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
@@ -606,13 +679,6 @@ def virihex(val, max=1.0, alpha=1.0):
     r, g, b, _a = matplotlib.cm.viridis(val/max)
     r, g, b, a = [ int(round(0xff*c)) for c in [r, g, b, alpha] ]
     return f'#{r:02x}{g:02x}{b:02x}{a:02x}'
-
-@contextmanager
-def DebugOutput(filename):
-    with open(filename, 'w') as f:
-        wrapper = DebugOutputWrapper(f)
-        yield wrapper
-        wrapper.save()
 
 class DebugOutputWrapper:
     def __init__(self, f):
