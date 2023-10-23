@@ -1,0 +1,22 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "KiMesh",
+    "description": "A security mesh generator for KiCad",
+    "description_full": "This is the footprint package for the KiMesh security mesh generator.",
+    "identifier": "de.jaseg.kimesh.footprints",
+    "type": "library",
+    "author": {
+        "name": "jaseg",
+        "contact": {
+            "web": "https://jaseg.de/"
+        }
+    },
+    "license": "CERN-OHL",
+    "resources": {
+        "homepage": "https://jaseg.de/projects/kimesh",
+        "git": "https://git.jaseg.de/kimesh.git",
+        "issues": "https://github.com/jaseg/kimesh/issues"
+    },
+    "versions": [
+    ]
+}
