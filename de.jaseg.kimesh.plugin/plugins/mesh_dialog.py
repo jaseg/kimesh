@@ -101,7 +101,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         for i, fp in enumerate(self.fps):
             ref = fp.GetReference()
             self.m_anchorChoice.Append(ref)
-            if (settings and ref == settings.anchor) or (not settings and ':MeshAnchor' in fp.GetFPID()):
+            if (settings and ref == settings.anchor) or (not settings and 'MeshAnchor' in str(fp.GetFPID().GetLibItemName())):
                 self.m_anchorChoice.SetSelection(i)
 
 
