@@ -1,0 +1,31 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v1",
+    "name": "KiMesh",
+    "description": "A security mesh generator for KiCad",
+    "description_full": "KiMesh automatically generates security meshes for you. A security mesh is a set of PCB traces that cover an area to detect physical tampering. KiMesh can cover arbitrary areas with two or more traces. Note: The KiMesh footprints Add-On must be installed alongside KiMesh. For detailed usage instructions, please have a look at the KiMesh website linked in the add-on information.",
+    "identifier": "de.jaseg.kimesh.plugin",
+    "type": "plugin",
+    "author": {
+        "name": "jaseg",
+        "contact": {
+            "web": "https://jaseg.de/"
+        }
+    },
+    "license": "GPL-3.0",
+    "resources": {
+        "homepage": "https://jaseg.de/projects/kimesh",
+        "git": "https://git.jaseg.de/kimesh.git",
+        "issues": "https://github.com/jaseg/kimesh/issues"
+    },
+    "versions": [
+        {
+            "version": "1.0.0",
+            "status": "stable",
+            "kicad_version": "7.99",
+            "download_sha256": "59da3a8a13be001fb6f5eee9e1d346f4beee6c0d736856b2da205db290ad21a6",
+            "download_size": 12895,
+            "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.plugin-v1.0.0.zip?h=v1.0.0",
+            "install_size": 45166
+        }
+    ]
+}

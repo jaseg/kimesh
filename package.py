@@ -53,33 +53,44 @@ def do_release(version, increment):
     for path in res.stdout.splitlines():
         if re.fullmatch(r'de\.jaseg\.kimesh\.[^/]*-v[.0-9]*\.zip', path.strip()):
             print(f'Removing old release zip {path} from git index.')
-            subprocess.run(['git', 'rm', '--cached', path], check=True, capture_output=True)
+            subprocess.run(['git', 'rm', path], check=True, capture_output=True)
 
     for pkg_dir in Path('de.jaseg.kimesh.plugin'), Path('de.jaseg.kimesh.footprints'):
-        meta_path = pkg_dir / 'metadata.json'
+        # NOTE: metadata.json appears twice. In what I believe is a sub-optimal design choice, the variant in the
+        # archive is only allowed to contain the current version in its version list without its zip file metadata,
+        # while the variant in the repository index is supposed to contain all past versions including their zip file
+        # metadata. AFAICT they are the same otherwise.
+        meta_path = Path(f'{pkg_dir}-repo-metadata.json')
+
         print(f'Updating metadata file {meta_path}')
-        meta_file = json.loads(meta_path.read_text())
-        subprocess.run(['git', 'add', str(meta_path)], check=True, capture_output=True)
         ver_dict = {
             'version': version,
             'status': 'stable',
             'kicad_version': '7.99',
         }
-        meta_file['versions'].append(ver_dict)
-        meta_path.write_text(json.dumps(meta_file, indent=4))
+
+        # Include just the version metadata in the metadata for the archive
+        meta_file = json.loads(meta_path.read_text())
+        meta_file['versions'] = [ver_dict]
+        (pkg_dir / 'metadata.json').write_text(json.dumps(meta_file, indent=4))
 
         zip_fn = Path(shutil.make_archive(f'{pkg_dir.name}-v{version}', 'zip', pkg_dir, '.'))
         print(f'Adding new release zip {zip_fn} to git index.')
         subprocess.run(['git', 'add', str(zip_fn)], check=True, capture_output=True)
 
+        # Add the zip's metadata to the metadata for the repository
         ver_dict['download_sha256'] = hashlib.sha256(zip_fn.read_bytes()).hexdigest()
         ver_dict['download_size'] = zip_fn.stat().st_size
         ver_dict['download_url'] = f'https://git.jaseg.de/kimesh.git/plain/{zip_fn.name}?h=v{version}'
         ver_dict['install_size'] = tree_size(pkg_dir)
+
+        meta_file = json.loads(meta_path.read_text())
+        meta_file['versions'].append(ver_dict)
         meta_path.write_text(json.dumps(meta_file, indent=4))
 
         print(f'Adding updated metadata file {meta_path} to git index')
         subprocess.run(['git', 'add', str(meta_path)], check=True, capture_output=True)
+
     print('Create git commit')
     subprocess.run(['git', 'commit', '-m', f'Version {version}', '--no-edit'], check=True, capture_output=True)
     res = subprocess.run('git rev-parse --short HEAD'.split(), check=True, capture_output=True, text=True)
