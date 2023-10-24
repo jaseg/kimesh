@@ -26,6 +26,15 @@
             "download_size": 822342,
             "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.footprints-v1.0.0.zip?h=v1.0.0",
             "install_size": 4803868
+        },
+        {
+            "version": "1.0.1",
+            "status": "stable",
+            "kicad_version": "7.99",
+            "download_sha256": "00bc9b6e264ee4f72324909e40dbc2d7d2ec6e91d150639d52492fe305c17620",
+            "download_size": 822997,
+            "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.footprints-v1.0.1.zip?h=v1.0.1",
+            "install_size": 4803868
         }
     ]
 }

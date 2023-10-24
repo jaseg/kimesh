@@ -19,13 +19,9 @@
     },
     "versions": [
         {
-            "version": "1.0.0",
+            "version": "1.0.1",
             "status": "stable",
-            "kicad_version": "7.99",
-            "download_sha256": "e0c1a2752090def465afa6f6c38baeb74a6544e79e87de3019087c41a3f2790e",
-            "download_size": 822342,
-            "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.footprints-v1.0.0.zip?h=v1.0.0",
-            "install_size": 4803868
+            "kicad_version": "7.99"
         }
     ]
 }
