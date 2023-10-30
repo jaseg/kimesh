@@ -39,6 +39,8 @@ class GeneratorSettings:
     randomness:         float = 1.0
     use_keepouts:       bool  = True
     use_outline:        bool  = True
+    use_tracks:         bool  = False
+    track_clearance:    float = 0.2   # mm
     save_visualization: bool  = True
     visualization_path: str   = 'mesh_visualizations'
 
@@ -115,6 +117,8 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             self.m_useKeepoutCheckbox.Value = settings.use_keepouts
             self.m_vizTextfield.Value = settings.visualization_path
             self.m_vizCheckbox.Value = settings.save_visualization
+            self.m_trackClearanceCheckbox.Value = settings.use_tracks
+            self.m_trackClearanceSpin.Value = settings.track_clearance
 
         self.SetMinSize(self.GetSize())
 
@@ -204,7 +208,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
             count += 1
             self.board.Remove(track)
-        print(f'Tore up {count} trace segments.')
+        print(f'KiMesh: Tore up {count} trace segments.')
 
     def settings_fn(self):
         return path.join(path.dirname(self.board.GetFileName()), 'last_kimesh_settings.json')
@@ -236,14 +240,16 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 use_outline = self.m_useOutlineCheckbox.Value,
                 use_keepouts = self.m_useKeepoutCheckbox.Value,
                 visualization_path = self.m_vizTextfield.Value,
-                save_visualization = self.m_vizCheckbox.Value)
+                save_visualization = self.m_vizCheckbox.Value,
+                use_tracks = self.m_trackClearanceCheckbox.Value,
+                track_clearance = self.m_trackClearanceSpin.Value)
         except ValueError as e:
             return wx.MessageDialog(self, "Invalid input value: {}.".format(e), "Invalid input").ShowModal()
 
         try:
             with open(self.settings_fn(), 'wb') as f:
                 f.write(settings.serialize())
-                print('Saved settings to', f.name)
+                print('KiMesh: Saved settings to', f.name)
         except:
             wx.MessageDialog(self, "Cannot save settings: {}.".format(e), "File I/O error").ShowModal()
 
@@ -262,7 +268,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         for zone in self.board.Zones():
             if zone.GetDoNotAllowCopperPour() and zone.GetLayerSet().Contains(target_layer_id):
                 keepouts.append(zone.Outline())
-        print(f'Found {len(keepouts)} keepout areas.')
+        print(f'KiMesh: Found {len(keepouts)} keepout areas.')
 
         if self.board_has_outline() and self.m_useOutlineCheckbox.Value: # Avoid foot-gun due to insane API. See note in the function.
             outlines = pcbnew.SHAPE_POLY_SET()
@@ -270,7 +276,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             board_outlines = list(self.poly_set_to_shapely(outlines))
             board_mask = shapely.ops.unary_union(board_outlines)
             mask = board_mask.buffer(-settings.edge_clearance)
-            print('board outline bounds:', mask.bounds)
+            print('KiMesh: Board outline bounds:', mask.bounds)
             if mask.is_empty:
                 return wx.MessageDialog(self, "Error: Board edge clearance is set too high. There is nothing left for the mesh after applying clearance.").ShowModal()
         else:
@@ -284,15 +290,15 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             mask = zone_mask
         else:
             mask = zone_mask.intersection(mask)
-        print('Mesh mask bounds:', zone_mask.bounds)
+        print('KiMesh: Mesh mask bounds:', zone_mask.bounds)
 
         if self.m_useKeepoutCheckbox.Value:
             keepout_outlines = [ outline for zone in keepouts for outline in self.poly_set_to_shapely(zone) ]
             keepout_mask = shapely.ops.unary_union(keepout_outlines)
             if not keepout_mask.is_empty:
                 mask = shapely.difference(mask, keepout_mask)
-            print('keepout mask bounds:', keepout_mask.bounds)
-            print('resulting mask bounds:', mask.bounds)
+            print('KiMesh: Keepout mask bounds:', keepout_mask.bounds)
+            print('KiMesh: Total mask bounds:', mask.bounds)
         if mask.is_empty:
             return wx.MessageDialog(self, "Error: After applying all keepouts, and intersecting with the board's outline, the mesh outline is empty.")
 
@@ -345,7 +351,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
 
         width_per_trace = trace_width + space_width
         grid_cell_width = width_per_trace * num_traces * 2
-        print(f'mesh cell size is {grid_cell_width}')
+        print(f'KiMesh: mesh cell size is {grid_cell_width} mm')
 
         x0, y0 = anchor_pads[len(anchor_pads)//2].GetPosition()
         x0, y0 = pcbnew.ToMM(x0), pcbnew.ToMM(y0)
@@ -353,7 +359,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         xl, yl = pcbnew.ToMM(xl), pcbnew.ToMM(yl)
 
         mesh_angle = math.atan2(xl-x0, yl-y0)
-        print('mesh angle is', math.degrees(mesh_angle))
+        print('KiMesh Mesh angle is', math.degrees(mesh_angle), 'degrees')
         len_along = - width_per_trace/2
         x0 += len_along * math.sin(mesh_angle)
         y0 += len_along * math.cos(mesh_angle)
@@ -366,7 +372,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
         grid_origin = grid_x0*grid_cell_width, grid_y0*grid_cell_width
         grid_rows = int(math.ceil((bbox[3] - grid_origin[1]) / grid_cell_width))
         grid_cols = int(math.ceil((bbox[2] - grid_origin[0]) / grid_cell_width))
-        print(f'generating grid of size {grid_rows} * {grid_cols} with origin {grid_x0}, {grid_y0}')
+        print(f'KiMesh: Generating grid of size {grid_rows} * {grid_cols} with origin {grid_x0}, {grid_y0}')
 
         grid = []
         for y in range(grid_y0, grid_y0+grid_rows):
@@ -380,6 +386,17 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 row.append(cell)
             grid.append(row)
 
+        def check_track_collision(cell, clearance=0.2):
+            cell_lc = pcbnew.SHAPE_LINE_CHAIN([pcbnew.VECTOR2I(pcbnew.FromMM(pt_x), pcbnew.FromMM(pt_y))
+                                               for pt_x, pt_y in cell.exterior.coords], True)
+            for track_or_via in self.board.GetTracks():
+                if not track_or_via.GetLayerSet().Contains(target_layer_id):
+                    continue
+
+                if pcbnew.ToMM(track_or_via.GetEffectiveShape().GetClearance(cell_lc)) < clearance:
+                    return True
+            return False
+
         num_valid = 0
         with self.viz('mesh_grid.svg') as dbg:
             dbg.add(mask, color='#00000020')
@@ -389,11 +406,17 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                     if mask.contains(cell):
                         if x == -1 and y == 0: # exit cell
                             color = '#ff00ff80'
+
+                        elif check_track_collision(cell):
+                            color = '#ffff0080'
+
                         else:
                             num_valid += 1
                             color = '#00ff0080'
+
                     elif mask.overlaps(cell):
-                        color = '#ffff0080'
+                        color = '#ff800080'
+
                     else:
                         color = '#ff000080'
                     dbg.add(cell, color=color)
@@ -401,11 +424,32 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             for foo in anchor_outlines:
                 dbg.add(foo, color='#0000ff00', stroke_width=0.05, stroke_color='#000000ff')
 
+            for track in self.board.GetTracks():
+                if not track.GetLayerSet().Contains(target_layer_id):
+                    continue
+
+                shape = track.GetEffectiveShape().Cast()
+                if isinstance(shape, pcbnew.SHAPE_SEGMENT):
+                    seg = shape.GetSeg()
+                    dbg.add([[(pcbnew.ToMM(seg.A.x), pcbnew.ToMM(seg.A.y)),
+                              (pcbnew.ToMM(seg.B.x), pcbnew.ToMM(seg.B.y))]],
+                            color='none', stroke_width=pcbnew.ToMM(shape.GetWidth()), stroke_color='#ff0000ff')
+                
+                elif isinstance(shape, pcbnew.SHAPE_CIRCLE):
+                    center = shape.GetCenter()
+                    c_cx, c_cy = pcbnew.ToMM(center.y), pcbnew.ToMM(center.y)
+                    c_r = pcbnew.ToMM(shape.GetRadius())
+                    dbg.add([[(c_cx, c_cy-c_r), (c_cx, c_cy+c_r)], [(c_cx-c_r, c_cy), (c_cx+c_r, c_cy)]], color='none', stroke_width=0.05, stroke_color='#ff0000ff')
+
             dbg.add([[(x0-2, y0), (x0+2, y0)], [(x0, y0-2), (x0, y0+2)]], color='none', stroke_width=0.05, stroke_color='#ff0000ff')
 
         def is_valid(cell):
             if not mask.contains(cell):
                 return False
+
+            if self.m_trackClearanceCheckbox.Value and check_track_collision(cell, self.m_trackClearanceSpin.Value):
+                return False
+
             return True
 
         def iter_neighbors(x, y):
@@ -439,8 +483,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
             rnd_state.shuffle(l)
             yield from l
 
-        def add_track(segment:geometry.LineString, net=None):
-            coords = list(segment.coords)
+        def add_track(coords, net=None):
             for (x1, y1), (x2, y2) in zip(coords, coords[1:]):
                 if (x1, y1) == (x2, y2): # zero-length track due to zero chamfer
                     continue
@@ -530,6 +573,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                             segment = affinity.translate(segment, x0, y0)
                             dbg_per_tile.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
 
+            tracks_to_add = []
             armed = False
             while not_visited or stack:
                 for n_x, n_y, bmask in skewed_random_iter(iter_neighbors(x, y), entry_dir, settings.randomness):
@@ -565,15 +609,20 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                             dbg_composite.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#ffffff60')
                             dbg_traces.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color='#000000ff')
                             dbg_tiles.add(segment, stroke_width=trace_width, color='#ff000000', stroke_color=stroke_color)
-                            add_track(segment, netinfos[net]) # FIXME (works, disabled for debug)
+                            tracks_to_add.append((list(segment.coords), netinfos[net]))
                             track_count += 1
+
                     if not stack:
                         break
+
                     if armed:
                         i += 1
                         #dump_output(i)
                         armed = False
                     *stack, (x, y, key, entry_dir, depth) = stack
+
+            for coords, net in tracks_to_add:
+                add_track(coords, net)
 
             dbg_cells.scale_colors('visit_depth', max_depth)
             dbg_composite.scale_colors('visit_depth', max_depth)
@@ -585,7 +634,7 @@ class MeshPluginMainDialog(mesh_plugin_dialog.MainDialog):
                 dbg_tiles.add(foo, color='#00000080', stroke_width=0.05, stroke_color='#00000000')
 
 
-        print(f'Added {track_count} trace segments.')
+        print(f'KiMesh: Added {track_count} trace segments.')
 
         #pcbnew.Refresh()
         #self.tearup_mesh()
@@ -732,7 +781,7 @@ class DebugOutputWrapper:
             raise ValueError(f'Unhandled shapely object type {type(obj)}')
 
         return (f'<path fill-rule="evenodd" fill="{fill_color}" opacity="{opacity}" stroke="{stroke_color}" '
-                f'stroke-width="{stroke_width}" d="{path}" />')
+                f'stroke-width="{stroke_width}" stroke-linecap="round" stroke-linejoin="round" d="{path}" />')
     
     def save(self, margin:'unit'=5, scale:'px/unit'=10):
         #specify margin in coordinate units

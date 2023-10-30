@@ -41,7 +41,7 @@ def do_release(version, increment):
     footprint_dir.mkdir()
 
     print('Re-generating footprints')
-    for n in range(2, 9):
+    for n in range(1, 9):
         subprocess.run(['python', '-m', 'footprint_generator',
                         '-w', '0.100,0.120,0.150,0.200,0.250,0.300,0.350,0.400,0.500,0.600,0.700,0.800,1.000,1.200,1.500,1.800',
                         '-c', '0.100,0.120,0.150,0.200,0.300,0.400,0.500',

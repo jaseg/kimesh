@@ -17,7 +17,7 @@ import wx.xrc
 class MainDialog ( wx.Dialog ):
 
 	def __init__( self, parent ):
-		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 632,580 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
+		wx.Dialog.__init__ ( self, parent, id = wx.ID_ANY, title = u"Security Mesh Generator Plugin", pos = wx.DefaultPosition, size = wx.Size( 632,650 ), style = wx.CLOSE_BOX|wx.DEFAULT_DIALOG_STYLE|wx.MINIMIZE_BOX|wx.RESIZE_BORDER|wx.STAY_ON_TOP )
 
 		self.SetSizeHints( wx.DefaultSize, wx.DefaultSize )
 
@@ -156,6 +156,21 @@ class MainDialog ( wx.Dialog ):
 		self.m_useOutlineCheckbox = wx.CheckBox( self, wx.ID_ANY, u"Respect board outline", wx.DefaultPosition, wx.DefaultSize, 0 )
 		self.m_useOutlineCheckbox.SetValue(True)
 		fgSizer1.Add( self.m_useOutlineCheckbox, 0, wx.ALL, 5 )
+
+
+		fgSizer1.Add( ( 0, 0), 1, wx.EXPAND, 5 )
+
+		self.m_trackClearanceCheckbox = wx.CheckBox( self, wx.ID_ANY, u"Respect Tracks and Vias", wx.DefaultPosition, wx.DefaultSize, 0 )
+		fgSizer1.Add( self.m_trackClearanceCheckbox, 0, wx.ALL, 5 )
+
+		self.m_staticText15 = wx.StaticText( self, wx.ID_ANY, u"Track/Via clearance", wx.DefaultPosition, wx.DefaultSize, 0 )
+		self.m_staticText15.Wrap( -1 )
+
+		fgSizer1.Add( self.m_staticText15, 0, wx.ALIGN_CENTER_VERTICAL|wx.ALIGN_RIGHT|wx.ALL, 5 )
+
+		self.m_trackClearanceSpin = wx.SpinCtrlDouble( self, wx.ID_ANY, wx.EmptyString, wx.DefaultPosition, wx.DefaultSize, wx.SP_ARROW_KEYS, 0, 1000, 0.2, 0.1 )
+		self.m_trackClearanceSpin.SetDigits( 3 )
+		fgSizer1.Add( self.m_trackClearanceSpin, 0, wx.ALL, 5 )
 
 
 		fgSizer1.Add( ( 0, 0), 1, wx.EXPAND, 5 )
