@@ -35,6 +35,15 @@
             "download_size": 12911,
             "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.plugin-v1.0.1.zip?h=v1.0.1",
             "install_size": 45187
+        },
+        {
+            "version": "1.1.0",
+            "status": "stable",
+            "kicad_version": "7.99",
+            "download_sha256": "25b2cc22a77ae145f3cfda263b09a1fd23fa26fddc05f023b02cddfb4b0939fe",
+            "download_size": 13439,
+            "download_url": "https://git.jaseg.de/kimesh.git/plain/de.jaseg.kimesh.plugin-v1.1.0.zip?h=v1.1.0",
+            "install_size": 48310
         }
     ]
 }
